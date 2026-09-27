@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SZPI-OS 管理页</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-soft: #161b22;
+    --card: #1a2029;
+    --line: #262d38;
+    --line-soft: #1f2631;
+    --fg: #e6edf3;
+    --fg-dim: #9aa7b4;
+    --fg-mute: #6b7683;
+    --accent: #2f81f7;
+    --accent-soft: #1f6feb33;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --radius: 12px;
+    --shadow: 0 1px 2px #0006, 0 8px 24px #0000004d;
+    font-synthesis-weight: none;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f2f4f7;
+      --bg-soft: #e8ecf1;
+      --card: #ffffff;
+      --line: #dce2ea;
+      --line-soft: #eaeef4;
+      --fg: #1b222c;
+      --fg-dim: #5a6673;
+      --fg-mute: #8b96a3;
+      --accent: #1f6feb;
+      --accent-soft: #1f6feb1f;
+      --ok: #1a7f37;
+      --warn: #9a6700;
+      --err: #cf222e;
+      --shadow: 0 1px 2px #0d111714, 0 8px 24px #0d11170f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", "Noto Sans SC", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  .top { display: flex; align-items: center; gap: 12px; height: 56px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), #8957e5);
+          display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 14px; }
+  .title { font-weight: 600; font-size: 15px; }
+  .sub { color: var(--fg-mute); font-size: 12px; }
+  .grow { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px;
+          border-radius: 999px; border: 1px solid var(--line); color: var(--fg-dim); background: var(--card); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .dot.off { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 20%, transparent); }
+
+  nav { display: flex; gap: 4px; }
+  nav button {
+    appearance: none; border: 0; background: none; color: var(--fg-dim); font: inherit; cursor: pointer;
+    padding: 0 14px; height: 40px; border-radius: 9px 9px 0 0; position: relative; font-weight: 500;
+  }
+  nav button[aria-selected="true"] { color: var(--fg); background: var(--card); border: 1px solid var(--line); border-bottom-color: var(--card); }
+  nav button[aria-selected="true"]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 2px; }
+
+  main { padding: 18px 0 48px; display: none; }
+  main.on { display: block; }
+
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--fg-dim);
+             letter-spacing: .04em; display: flex; align-items: center; gap: 8px; }
+  .card h3 .tag { font-weight: 400; color: var(--fg-mute); letter-spacing: 0; }
+  .rows { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; align-items: baseline; }
+  .rows dt { color: var(--fg-mute); font-size: 13px; white-space: nowrap; }
+  .rows dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .big { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+  .dim { color: var(--fg-dim); }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar > i.warn { background: var(--warn); } .bar > i.err { background: var(--err); }
+
+  /* 信号格：4 根小柱子（不用图标字体，任何系统都一致） */
+  .sg { display: inline-block; width: 3px; border-radius: 1px; background: var(--line);
+        margin-right: 2px; vertical-align: middle; }
+  .sg:nth-child(1) { height: 5px; } .sg:nth-child(2) { height: 8px; }
+  .sg:nth-child(3) { height: 11px; } .sg:nth-child(4) { height: 14px; }
+  .sg.on { background: var(--ok); }
+
+  .logs { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+          box-shadow: var(--shadow); overflow: hidden; margin-top: 14px; }
+  .logs .hd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .logs pre { margin: 0; padding: 12px 14px; max-height: 46vh; overflow: auto;
+              font: 12px/1.55 ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+              color: var(--fg-dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .logs pre b { color: var(--fg); font-weight: 600; }
+
+  input[type=text], input[type=search] {
+    appearance: none; background: var(--bg-soft); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 7px 10px; font: inherit; min-width: 0;
+  }
+  input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+  button.btn {
+    appearance: none; font: inherit; cursor: pointer; padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg-soft); color: var(--fg);
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  button.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.btn:disabled { opacity: .45; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+  button.btn.danger:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
+  button.icon { padding: 6px 9px; }
+
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .toolbar + .toolbar { margin-top: 8px; }
+  .crumbs { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 180px; flex-wrap: wrap; }
+  .crumbs a { padding: 3px 6px; border-radius: 6px; color: var(--fg-dim); }
+  .crumbs a:hover { background: var(--bg-soft); color: var(--fg); }
+  .crumbs span { color: var(--fg-mute); }
+
+  .files { margin-top: 12px; background: var(--card); border: 1px solid var(--line);
+           border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+  th { font-size: 12px; font-weight: 500; color: var(--fg-mute); background: var(--bg-soft); position: sticky; top: 56px; }
+  tbody tr:hover { background: var(--bg-soft); }
+  tbody tr.sel { background: var(--accent-soft); }
+  td.size, th.size { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg-dim); white-space: nowrap; }
+  td.act { text-align: right; white-space: nowrap; }
+  .name { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .name .ic { width: 18px; height: 18px; flex: 0 0 18px; }
+  .name .ic svg { width: 18px; height: 18px; display: block; }
+  .name .ic.dir { color: #e3b341; } .name .ic.file { color: var(--fg-mute); }
+  .name .nm { overflow-wrap: anywhere; }
+  .empty { padding: 26px; text-align: center; color: var(--fg-mute); }
+  .selbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-soft);
+            border-bottom: 1px solid var(--line); font-size: 13px; color: var(--fg-dim); flex-wrap: wrap; }
+  .drop { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
+          background: color-mix(in srgb, var(--bg) 72%, transparent); border: 3px dashed var(--accent); font-size: 16px; }
+  .drop.on { display: flex; }
+
+  .queue { margin-top: 12px; display: grid; gap: 6px; }
+  .queue .item { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
+                 background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+  .queue .nm { font-size: 13px; overflow-wrap: anywhere; }
+  .queue .pct { font-variant-numeric: tabular-nums; color: var(--fg-dim); font-size: 13px; }
+  .queue .bar { grid-column: 1 / -1; margin: 0; }
+
+  /* 后台任务（复制 / 剪切 / 删除）的进度条 */
+  .job { margin-top: 12px; background: var(--card); border: 1px solid var(--line);
+         border-radius: 10px; padding: 10px 12px; display: grid; gap: 7px; }
+  .job .txt { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .job .txt .grow { flex: 1; }
+  .job .txt .pct { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+  .job .bar { margin: 0; }
+
+  dialog.modal { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); color: var(--fg);
+                 padding: 0; box-shadow: var(--shadow); max-width: 92vw; width: 380px; }
+  dialog.modal::backdrop { background: #0009; backdrop-filter: blur(2px); }
+  dialog.modal .body { padding: 16px; display: grid; gap: 12px; }
+  dialog.modal h4 { margin: 0; font-size: 15px; }
+  dialog.modal p { margin: 0; color: var(--fg-dim); font-size: 13px; overflow-wrap: anywhere; }
+  dialog.modal .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--bg-soft); }
+  dialog.modal input { width: 100%; }
+
+  #toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 80;
+           display: grid; gap: 8px; width: max-content; max-width: 92vw; }
+  #toast div { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+               border-radius: 8px; padding: 9px 14px; box-shadow: var(--shadow); font-size: 13px; animation: pop .18s ease-out; }
+  #toast div.err { border-left-color: var(--err); }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px); } }
+
+  @media (max-width: 620px) {
+    .th-size, td.size, th.size { display: none; }
+    .top { height: 52px; }
+    main { padding-top: 14px; }
+    th { top: 52px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <div class="logo">SZ</div>
+      <div>
+        <div class="title" id="dev">SZPI-OS</div>
+        <div class="sub" id="devsub">管理页</div>
+      </div>
+      <div class="grow"></div>
+      <span class="pill" id="netpill"><i class="dot off"></i><span>未连接</span></span>
+    </div>
+    <nav>
+      <button id="tab-status" aria-selected="true">系统状态</button>
+      <button id="tab-files" aria-selected="false">文件管理</button>
+      <div class="grow"></div>
+      <div class="sub" id="stamp" style="align-self:center;padding-right:4px"></div>
+    </nav>
+  </div>
+</header>
+
+<main id="page-status" class="on">
+  <div class="wrap">
+    <div class="toolbar" style="margin-bottom:12px">
+      <span class="sub">自动刷新：状态 2 秒 / 日志 2.5 秒</span>
+      <div class="grow"></div>
+      <button class="btn" id="s-refresh">刷新</button>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>系统信息 <span class="tag" id="sys-tag"></span></h3>
+        <dl class="rows">
+          <dt>芯片</dt><dd id="i-chip">—</dd>
+          <dt>固件</dt><dd id="i-ver" class="mono">—</dd>
+          <dt>构建</dt><dd id="i-app" class="mono">—</dd>
+          <dt>ESP-IDF</dt><dd id="i-idf" class="mono">—</dd>
+          <dt>MAC</dt><dd id="i-mac" class="mono">—</dd>
+          <dt>运行时长</dt><dd id="i-up">—</dd>
+          <dt>复位原因</dt><dd id="i-reset">—</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>内存</h3>
+        <dl class="rows" style="grid-template-columns:1fr auto">
+          <dt>内部 SRAM 剩余</dt><dd class="big" id="i-heap">—</dd>
+        </dl>
+        <div class="bar"><i id="i-heap-bar" style="width:0%"></i></div>
+        <dl class="rows" style="grid-template-columns:auto 1fr;margin-top:10px">
+          <dt>历史最低</dt><dd id="i-heap-min" class="mono">—</dd>
+          <dt>PSRAM 剩余</dt><dd id="i-psram" class="mono">—</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>Wi-Fi</h3>
+        <dl class="rows">
+          <dt>状态</dt><dd id="w-state">—</dd>
+          <dt>网络</dt><dd id="w-ssid">—</dd>
+          <dt>IP 地址</dt><dd class="mono"><a id="w-ip" href="#">—</a></dd>
+          <dt>信号</dt><dd id="w-rssi">—</dd>
+          <dt>Web 服务</dt><dd id="w-web">—</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>蓝牙</h3>
+        <dl class="rows">
+          <dt>状态</dt><dd id="b-state">—</dd>
+          <dt>广播</dt><dd id="b-adv">—</dd>
+          <dt>已连接设备</dt><dd id="b-peer">—</dd>
+          <dt>地址</dt><dd id="b-peer-bda" class="mono">—</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>存储</h3>
+        <dl class="rows" style="grid-template-columns:1fr auto">
+          <dt>TF 卡<span class="dim" id="s-tf-info"></span></dt><dd id="s-tf">—</dd>
+        </dl>
+        <div class="bar"><i id="s-tf-bar" style="width:0%"></i></div>
+        <dl class="rows" style="grid-template-columns:1fr auto;margin-top:10px">
+          <dt>内置 Flash<span class="dim" id="s-int-info"></span></dt><dd id="s-int">—</dd>
+        </dl>
+        <div class="bar"><i id="s-int-bar" style="width:0%"></i></div>
+      </div>
+    </div>
+
+    <div class="logs">
+      <div class="hd">
+        <strong style="font-size:13px">系统日志</strong>
+        <span class="sub" id="log-sub">最近 2 KB</span>
+        <div class="grow"></div>
+        <input type="search" id="log-filter" placeholder="过滤关键字…" style="width:150px">
+        <button class="btn icon" id="log-pause" title="暂停刷新">暂停</button>
+        <button class="btn icon" id="log-follow" title="跟随最新" style="color:var(--accent)">跟随</button>
+        <button class="btn icon" id="log-clear" title="只清空显示，不动机器">清空显示</button>
+      </div>
+      <pre id="log-view">加载中…</pre>
+    </div>
+  </div>
+</main>
+
+<main id="page-files">
+  <div class="wrap">
+    <div class="toolbar">
+      <button class="btn" id="f-tf">TF 卡</button>
+      <button class="btn" id="f-int">内置</button>
+      <div class="crumbs" id="crumbs"></div>
+      <button class="btn" id="f-refresh">刷新</button>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="f-upload">上传</button>
+      <input type="file" id="f-file" multiple style="display:none">
+      <button class="btn" id="f-mkdir">新建文件夹</button>
+      <button class="btn" id="f-copy">复制</button>
+      <button class="btn" id="f-cut">剪切</button>
+      <button class="btn" id="f-paste" disabled>粘贴</button>
+      <button class="btn danger" id="f-del" disabled>删除</button>
+      <div class="grow"></div>
+      <span class="sub" id="f-space"></span>
+    </div>
+
+    <div class="files">
+      <div class="selbar">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="f-all"> 全选
+        </label>
+        <span id="f-count">—</span>
+        <div class="grow"></div>
+        <span class="sub" id="f-clip"></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px"></th>
+            <th>名称</th>
+            <th class="size" style="width:110px">大小</th>
+            <th style="width:150px"></th>
+          </tr>
+        </thead>
+        <tbody id="f-rows"></tbody>
+      </table>
+      <div class="empty" id="f-empty">加载中…</div>
+    </div>
+
+    <div class="queue" id="f-queue"></div>
+    <div class="job" id="f-job" style="display:none">
+      <div class="txt">
+        <span id="f-job-kind">处理中</span>
+        <div class="grow"></div>
+        <span class="pct" id="f-job-pct">0 / 0</span>
+      </div>
+      <div class="bar"><i id="f-job-bar" style="width:0%"></i></div>
+      <div class="sub" id="f-job-name"></div>
+    </div>
+  </div>
+</main>
+
+<div class="drop" id="drop">松开鼠标即可上传</div>
+<div id="toast"></div>
+
+<dialog class="modal" id="dlg">
+  <div class="body">
+    <h4 id="dlg-title"></h4>
+    <p id="dlg-text"></p>
+    <input type="text" id="dlg-input" style="display:none">
+  </div>
+  <div class="foot">
+    <button class="btn" id="dlg-cancel">取消</button>
+    <button class="btn primary" id="dlg-ok">确定</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+
+/* ---------------------------------- 小工具 ---------------------------------- */
+
+const $ = (id) => document.getElementById(id);
+
+/* 图标用内联 SVG：文件列表里黄色文件夹 / 灰色文件，避免依赖字体里的图标字形 */
+const ICON_DIR = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3A1.5 1.5 0 0 1 3 1.5h2.9c.4 0 .78.16 1.06.44L8.06 3H13a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5V3Zm1.5 0v8.5h10V4.5H7.65L6.2 3.05A.5.5 0 0 0 5.85 3H3Z"/></svg>';
+const ICON_FILE = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 1.5h5L13.5 6v8.5H4V1.5Zm1.5 1.5v10h6.5V6.8h-3.3V3H5.5Z"/></svg>';
+
+function fmtSize(n) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n >= 100 ? 0 : 1) + " " + u[i];
+}
+
+function fmtDur(sec) {
+  if (!sec && sec !== 0) return "—";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600);
+  const m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  if (d) return d + " 天 " + h + " 小时";
+  if (h) return h + " 小时 " + m + " 分";
+  if (m) return m + " 分 " + s + " 秒";
+  return s + " 秒";
+}
+
+function toast(msg, isErr) {
+  const el = document.createElement("div");
+  el.className = isErr ? "err" : "";
+  el.textContent = msg;
+  $("toast").appendChild(el);
+  setTimeout(() => el.remove(), isErr ? 5000 : 2600);
+}
+
+/* 弹一个输入 / 确认框；type: "prompt" | "confirm" */
+function ask({ title, text, value, ok = "确定", input = false }) {
+  return new Promise((resolve) => {
+    const dlg = $("dlg");
+    $("dlg-title").textContent = title;
+    $("dlg-text").textContent = text || "";
+    $("dlg-text").style.display = text ? "" : "none";
+    $("dlg-ok").textContent = ok;
+    const inp = $("dlg-input");
+    inp.style.display = input ? "" : "none";
+    inp.value = value || "";
+    dlg.showModal();
+    if (input) setTimeout(() => { inp.focus(); inp.select(); }, 30);
+
+    const done = (v) => {
+      dlg.close();
+      $("dlg-ok").onclick = $("dlg-cancel").onclick = inp.onkeydown = null;
+      resolve(v);
+    };
+    $("dlg-ok").onclick = () => done(input ? inp.value.trim() : true);
+    $("dlg-cancel").onclick = () => done(false);
+    inp.onkeydown = (e) => { if (e.key === "Enter") done(inp.value.trim()); };
+  });
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch (e) { /* 非 JSON：按错误处理 */ }
+  if (!res.ok || data === null) {
+    throw new Error((data && data.err) || ("HTTP " + res.status));
+  }
+  if (data.ok === false) throw new Error(data.err || "操作失败");
+  return data;
+}
+
+/* ---------------------------------- 页签 ---------------------------------- */
+
+for (const [btn, page] of [["tab-status", "page-status"], ["tab-files", "page-files"]]) {
+  $(btn).onclick = () => {
+    for (const b of ["tab-status", "tab-files", "page-status", "page-files"]) $(b).classList.remove("on");
+    $("tab-status").setAttribute("aria-selected", "false");
+    $("tab-files").setAttribute("aria-selected", "false");
+    $(btn).setAttribute("aria-selected", "true");
+    $(page).classList.add("on");
+    if (page === "page-files") loadFiles();
+  };
+}
+
+/* ---------------------------------- 系统状态 ---------------------------------- */
+
+let lastLogs = "";
+let logPaused = false, logFollow = true;
+let statusBusy = false, logsBusy = false;
+let transferHint = false;      /* 正在上下传大文件：顶栏提示一句，省得看着像卡了 */
+
+async function loadStatus() {
+  if (statusBusy || uploading) return;   /* 上一次没回来 / 正在上传：别堆请求（服务端只有一个 HTTP 任务） */
+  statusBusy = true;
+
+  try {
+    const s = await api("/api/status");
+    setOnline(true);
+    if (!transferHint) $("stamp").textContent = "更新于 " + new Date().toLocaleTimeString();
+
+    document.title = s.sys.name + " 管理页";
+    $("dev").textContent = s.sys.name;
+    $("devsub").textContent = "固件 " + s.sys.ver;
+    $("sys-tag").textContent = "运行中";
+
+    $("i-chip").textContent = s.sys.chip + " · " + s.sys.cores + " 核 · rev" + s.sys.rev;
+    $("i-ver").textContent = s.sys.ver;
+    $("i-app").textContent = s.sys.app || "—";
+    $("i-idf").textContent = s.sys.idf;
+    $("i-mac").textContent = s.sys.mac;
+    $("i-up").textContent = fmtDur(s.sys.up);
+    $("i-reset").textContent = s.sys.reset;
+
+    $("i-heap").textContent = fmtSize(s.sys.heap);
+    $("i-heap-min").textContent = fmtSize(s.sys.heap_min);
+    $("i-psram").textContent = fmtSize(s.sys.psram);
+    /* 内部 SRAM 总量按 512 KB 估算，只看趋势 */
+    bar($("i-heap-bar"), s.sys.heap / (512 * 1024));
+
+    $("w-state").innerHTML = s.wifi.on ? '<span class="ok">已连接</span>' : '<span class="err">未连接</span>';
+    $("w-ssid").textContent = s.wifi.ssid || "—";
+    $("w-ip").textContent = s.wifi.ip || "—";
+    $("w-ip").href = s.wifi.ip ? "http://" + s.wifi.ip + "/" : "#";
+    $("w-rssi").innerHTML = s.wifi.on ? bars(s.wifi.rssi) + " " + s.wifi.rssi + " dBm" : "—";
+    $("w-web").innerHTML = s.wifi.web ? '<span class="ok">已开启</span>' : '<span class="dim">未开启</span>';
+
+    $("b-state").textContent = s.bt.state_name;
+    $("b-adv").innerHTML = s.bt.adv ? '<span class="ok">广播中</span>' : '<span class="dim">未广播</span>';
+    $("b-peer").textContent = s.bt.conn ? (s.bt.peer_name || "已连接") : "未连接";
+    $("b-peer-bda").textContent = s.bt.peer || "—";
+
+    const tf = s.stor.find((x) => x.id === "tf"), it = s.stor.find((x) => x.id === "int");
+    store("s-tf", "s-tf-bar", "s-tf-info", tf);
+    store("s-int", "s-int-bar", "s-int-info", it);
+  } catch (e) {
+    setOnline(false);
+  } finally {
+    statusBusy = false;
+  }
+}
+
+/* 点了下载 / 开始上传时提示一下：大文件传输期间状态刷新会排队等 */
+function markTransfer() {
+  transferHint = true;
+  $("stamp").textContent = "传输中，刷新会慢一些…";
+}
+
+function store(valId, barId, infoId, x) {
+  if (!x || !x.ok || !x.total) {
+    $(valId).textContent = "未挂载";
+    $(infoId).textContent = "";
+    bar($(barId), 0);
+    return;
+  }
+  const used = x.total - x.free;
+  $(valId).innerHTML = "<span class='dim'>" + fmtSize(used) + " / </span>" + fmtSize(x.total);
+  $(infoId).textContent = " · 剩余 " + fmtSize(x.free);
+  bar($(barId), used / x.total);
+}
+
+function bar(el, ratio) {
+  const p = Math.max(0, Math.min(1, ratio || 0));
+  el.style.width = (p * 100).toFixed(1) + "%";
+  el.className = p > 0.9 ? "err" : (p > 0.75 ? "warn" : "");
+}
+
+function bars(rssi) {
+  const lv = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : 1;
+  let s = "";
+  for (let i = 1; i <= 4; i++) s += "<i class='sg" + (i <= lv ? " on" : "") + "'></i>";
+  return s;
+}
+
+function setOnline(on) {
+  const p = $("netpill");
+  p.querySelector(".dot").className = "dot" + (on ? "" : " off");
+  p.querySelector("span").textContent = on ? "在线" : "连接断开";
+}
+
+async function loadLogs() {
+  if (logPaused || logsBusy || uploading) return;
+  logsBusy = true;
+
+  let text = "";
+  try {
+    const res = await fetch("/api/logs", { cache: "no-store" });
+    text = await res.text();
+  } catch (e) {
+    logsBusy = false;
+    return;
+  }
+  logsBusy = false;
+
+  const filter = $("log-filter").value.trim();
+  if (filter) {
+    text = text.split("\n").filter((l) => l.includes(filter)).join("\n");
+  }
+  if (text === lastLogs) return;
+  lastLogs = text;
+
+  const box = $("log-view");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  box.textContent = text || "（暂无日志）";
+  if (logFollow || atBottom) box.scrollTop = box.scrollHeight;
+}
+
+$("log-pause").onclick = () => {
+  logPaused = !logPaused;
+  $("log-pause").textContent = logPaused ? "继续" : "暂停";
+  $("log-sub").textContent = logPaused ? "已暂停" : "最近 2 KB";
+  if (!logPaused) loadLogs();
+};
+$("log-follow").onclick = () => {
+  logFollow = !logFollow;
+  $("log-follow").style.color = logFollow ? "var(--accent)" : "";
+  if (logFollow) { $("log-view").scrollTop = $("log-view").scrollHeight; }
+};
+$("log-clear").onclick = () => { lastLogs = ""; $("log-view").textContent = ""; };
+$("log-filter").oninput = () => { lastLogs = ""; loadLogs(); };
+
+/* ---------------------------------- 文件管理 ---------------------------------- */
+
+const st = {
+  path: "/sdcard",
+  items: [],
+  sel: new Set(),
+  clip: null,          /* { mode: "copy" | "cut", paths: [...] } */
+};
+
+const JOB_KIND = { 1: "删除", 2: "复制", 3: "剪切" };
+let jobBusy = false, jobPolling = false;
+let uploading = 0;
+
+function join(dir, name) { return dir.replace(/\/$/, "") + "/" + name; }
+
+async function loadFiles() {
+  try {
+    const d = await api("/api/files?path=" + encodeURIComponent(st.path));
+    st.path = d.path;
+    st.items = d.items || [];
+    st.sel.clear();
+    /* SPIFFS 不支持建目录：在内置存储里禁用「新建文件夹」 */
+    $("f-mkdir").disabled = st.path.startsWith("/internal");
+    renderSpace(d);
+  } catch (e) {
+    toast("读取目录失败：" + e.message, true);
+    return;
+  }
+  renderCrumb();
+  renderRows();
+}
+
+function renderSpace(d) {
+  if (!d || !d.ok_info || !d.total) { $("f-space").textContent = "未挂载"; return; }
+  const used = d.total - d.free;
+  $("f-space").textContent = "已用 " + fmtSize(used) + " / " + fmtSize(d.total)
+                           + " · 剩余 " + fmtSize(d.free);
+}
+
+function renderCrumb() {
+  const box = $("crumbs");
+  box.innerHTML = "";
+  const root = st.path.startsWith("/internal") ? "/internal" : "/sdcard";
+  const label = root === "/internal" ? "内置" : "TF 卡";
+  const parts = st.path.slice(root.length).split("/").filter(Boolean);
+
+  const mk = (text, path, last) => {
+    if (last) {
+      const s = document.createElement("span");
+      s.textContent = text;
+      box.appendChild(s);
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = "#";
+    a.textContent = text;
+    a.onclick = (e) => { e.preventDefault(); go(path); };
+    box.appendChild(a);
+    if (!last) { const s = document.createElement("span"); s.textContent = "/"; box.appendChild(s); }
+  };
+
+  mk(label, root, parts.length === 0);
+  let acc = root;
+  parts.forEach((p, i) => { acc += "/" + p; mk(p, acc, i === parts.length - 1); });
+}
+
+function go(path) {
+  st.path = path;
+  loadFiles();
+}
+
+function renderRows() {
+  const tb = $("f-rows");
+  tb.innerHTML = "";
+  $("f-empty").style.display = st.items.length ? "none" : "";
+
+  st.items.forEach((it) => {
+    const tr = document.createElement("tr");
+    const full = join(st.path, it.name);
+    if (st.sel.has(it.name)) tr.className = "sel";
+
+    const td0 = document.createElement("td");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = st.sel.has(it.name);
+    cb.onchange = () => {
+      if (cb.checked) st.sel.add(it.name); else st.sel.delete(it.name);
+      tr.className = cb.checked ? "sel" : "";
+      syncSel();
+    };
+    td0.appendChild(cb);
+
+    const td1 = document.createElement("td");
+    const nameBox = document.createElement("div");
+    nameBox.className = "name";
+    nameBox.innerHTML = "<span class='ic " + (it.dir ? "dir'>" + ICON_DIR : "file'>" + ICON_FILE)
+                      + "</span><span class='nm'></span>";
+    nameBox.querySelector(".nm").textContent = it.name;
+    nameBox.onclick = () => {
+      if (it.dir) {
+        go(full);
+      } else {
+        markTransfer();
+        window.location.href = "/api/download?dl=1&path=" + encodeURIComponent(full);
+      }
+    };
+    td1.appendChild(nameBox);
+
+    const td2 = document.createElement("td");
+    td2.className = "size";
+    td2.textContent = it.dir ? "—" : fmtSize(it.size);
+
+    const td3 = document.createElement("td");
+    td3.className = "act";
+    if (!it.dir) {
+      const a = document.createElement("a");
+      a.href = "/api/download?dl=1&path=" + encodeURIComponent(full);
+      a.className = "btn icon";
+      a.textContent = "下载";
+      a.style.marginRight = "6px";
+      a.onclick = markTransfer;
+      td3.appendChild(a);
+    }
+    td3.appendChild(mkBtn("改名", () => doRename(full, it.name)));
+    td3.appendChild(mkBtn("删除", () => doDelete([full]), true));
+
+    tr.append(td0, td1, td2, td3);
+    tb.appendChild(tr);
+  });
+
+  syncSel();
+}
+
+function mkBtn(text, onclick, danger) {
+  const b = document.createElement("button");
+  b.className = "btn icon" + (danger ? " danger" : "");
+  b.style.marginLeft = "6px";
+  b.textContent = text;
+  b.onclick = onclick;
+  return b;
+}
+
+function syncSel() {
+  const n = st.sel.size;
+  $("f-count").textContent = st.items.length ? (n ? "已选 " + n + " 项" : "共 " + st.items.length + " 项") : "空目录";
+  $("f-all").checked = st.items.length > 0 && n === st.items.length;
+  $("f-del").disabled = n === 0 || jobBusy;
+  $("f-copy").disabled = n === 0 || jobBusy;
+  $("f-cut").disabled = n === 0 || jobBusy;
+  $("f-paste").disabled = !st.clip || jobBusy;
+  $("f-clip").textContent = st.clip
+    ? (st.clip.mode === "cut" ? "已剪切 " : "已复制 ") + st.clip.paths.length + " 项，选个目录粘贴"
+    : "";
+}
+
+/* 后台任务的进度条：复制 / 剪切 / 删除都走这条路（提交后轮询，不占着 HTTP 任务） */
+function showJob(j) {
+  jobBusy = true;
+  $("f-job").style.display = "";
+  $("f-job-kind").textContent = (JOB_KIND[j.kind] || "处理") + "中…";
+  $("f-job-pct").textContent = j.done + " / " + j.total
+                             + (j.failed ? "（" + j.failed + " 项失败）" : "");
+  bar($("f-job-bar"), j.total ? j.done / j.total : 0);
+  $("f-job-name").textContent = j.name ? "当前：" + j.name : "";
+  syncSel();
+}
+
+function hideJob() {
+  jobBusy = false;
+  $("f-job").style.display = "none";
+  syncSel();
+}
+
+function startJobPolling() {
+  if (jobPolling) return;
+  jobPolling = true;
+
+  const tick = async () => {
+    let j = null;
+    try { j = await api("/api/job"); } catch (e) { /* 网络抖一下就接着问 */ }
+
+    if (j && j.busy) {
+      showJob(j);
+      setTimeout(tick, 600);
+      return;
+    }
+
+    jobPolling = false;
+    hideJob();
+    if (j && j.total) {
+      const label = JOB_KIND[j.kind] || "处理";
+      if (j.failed) {
+        toast(label + "完成 " + j.done + " 项，" + j.failed + " 项失败（"
+              + (j.failed_name || "?") + "）", true);
+      } else {
+        toast(label + "完成，共 " + j.done + " 项");
+      }
+      loadFiles();
+    }
+  };
+
+  tick();
+}
+
+function selectedPaths() {
+  return [...st.sel].map((n) => join(st.path, n));
+}
+
+/* 删除：二次确认；实际删除交给设备上的后台任务，这里只轮询进度 */
+async function doDelete(paths) {
+  if (!paths.length) return;
+  const names = paths.map((p) => p.split("/").pop());
+  const ok = await ask({
+    title: "删除 " + paths.length + " 项？",
+    text: names.slice(0, 6).join("、") + (names.length > 6 ? " 等" : "") + "，删除后无法恢复。",
+    ok: "删除",
+  });
+  if (!ok) return;
+
+  try {
+    await api("/api/delete", { method: "POST", body: paths.join("\n") });
+    startJobPolling();
+  } catch (e) {
+    toast("删除失败：" + e.message, true);
+  }
+}
+
+async function doRename(full, name) {
+  const val = await ask({ title: "重命名", text: name, value: name, input: true, ok: "改名" });
+  if (!val || val === name) return;
+  try {
+    await api("/api/rename?path=" + encodeURIComponent(full) + "&name=" + encodeURIComponent(val),
+              { method: "POST" });
+    toast("已改名为 " + val);
+  } catch (e) { toast("改名失败：" + e.message, true); }
+  loadFiles();
+}
+
+async function doMkdir() {
+  const name = await ask({ title: "新建文件夹", value: "新建文件夹", input: true, ok: "创建" });
+  if (!name) return;
+  try {
+    await api("/api/mkdir?path=" + encodeURIComponent(join(st.path, name)), { method: "POST" });
+    toast("已创建 " + name);
+  } catch (e) { toast("创建失败：" + e.message, true); }
+  loadFiles();
+}
+
+/* 粘贴：同样交给后台任务（复制大目录不再让页面等） */
+async function doPaste() {
+  if (!st.clip) return;
+  const { mode, paths } = st.clip;
+  try {
+    await api("/api/paste?to=" + encodeURIComponent(st.path) + "&mode=" + mode,
+              { method: "POST", body: paths.join("\n") });
+    startJobPolling();
+  } catch (e) {
+    toast("粘贴失败：" + e.message, true);
+  }
+}
+
+/* 上传：一次一个（写入串行最稳），带进度；期间状态轮询会主动让路 */
+async function uploadFiles(files) {
+  if (!files.length) return;
+
+  const queue = $("f-queue");
+  for (const f of files) {
+    const row = document.createElement("div");
+    row.className = "item";
+    row.innerHTML = "<div class='nm'></div><div class='pct'>0%</div><div class='bar'><i style='width:0%'></i></div>";
+    row.querySelector(".nm").textContent = f.name + "（" + fmtSize(f.size) + "）";
+    const pct = row.querySelector(".pct"), fill = row.querySelector(".bar > i");
+    queue.appendChild(row);
+
+    uploading++;
+    markTransfer();
+
+    try {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload?dir=" + encodeURIComponent(st.path)
+                        + "&name=" + encodeURIComponent(f.name));
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          const p = Math.round(e.loaded / e.total * 100);
+          pct.textContent = p + "%";
+          fill.style.width = p + "%";
+        };
+        xhr.onload = () => {
+          let d = null;
+          try { d = JSON.parse(xhr.responseText); } catch (e) {}
+          if (xhr.status === 200 && d && d.ok) {
+            pct.textContent = "完成";
+            fill.style.width = "100%";
+            resolve(d);
+          } else {
+            reject(new Error((d && d.err) || ("HTTP " + xhr.status)));
+          }
+        };
+        xhr.onerror = () => reject(new Error("网络中断"));
+        xhr.send(f);
+      });
+    } catch (e) {
+      pct.textContent = "失败";
+      fill.className = "err";
+      toast("上传 " + f.name + " 失败：" + e.message, true);
+    } finally {
+      uploading--;
+    }
+  }
+
+  loadFiles();
+  loadStatus();
+  setTimeout(() => queue.innerHTML = "", 4000);
+}
+
+/* ---------------------------------- 交互绑定 ---------------------------------- */
+
+$("f-tf").onclick = () => go("/sdcard");
+$("f-int").onclick = () => go("/internal");
+$("f-refresh").onclick = () => { loadFiles(); toast("已刷新目录"); };
+$("s-refresh").onclick = () => { lastLogs = ""; loadStatus(); loadLogs(); toast("已刷新"); };
+$("f-mkdir").onclick = doMkdir;
+$("f-paste").onclick = doPaste;
+$("f-del").onclick = () => doDelete(selectedPaths());
+$("f-upload").onclick = () => $("f-file").click();
+$("f-file").onchange = (e) => { uploadFiles([...e.target.files]); e.target.value = ""; };
+$("f-copy").onclick = () => { st.clip = { mode: "copy", paths: selectedPaths() }; syncSel(); toast("已复制 " + st.clip.paths.length + " 项，进入目标目录后粘贴"); };
+$("f-cut").onclick = () => { st.clip = { mode: "cut", paths: selectedPaths() }; syncSel(); toast("已剪切 " + st.clip.paths.length + " 项，进入目标目录后粘贴"); };
+$("f-all").onchange = (e) => {
+  st.sel.clear();
+  if (e.target.checked) st.items.forEach((it) => st.sel.add(it.name));
+  renderRows();
+};
+
+/* 拖拽上传 */
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (![...e.dataTransfer.types].includes("Files")) return;
+  dragDepth++; $("drop").classList.add("on");
+});
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").classList.remove("on"); } });
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0; $("drop").classList.remove("on");
+  if (e.dataTransfer.files.length) {
+    $("tab-files").click();
+    uploadFiles([...e.dataTransfer.files]);
+  }
+});
+
+/* 状态轮询：页面在文件页时也给状态刷着（顶栏的在线指示） */
+setInterval(loadStatus, 2000);
+setInterval(loadLogs, 2500);
+
+/* 首次进来固定停在「系统状态」页；文件管理的路径不写进 URL，刷新不回记住的目录 */
+(function init() {
+  loadStatus();
+  loadLogs();
+  /* 刷新页面时设备上可能还有任务在跑：接着显示它的进度 */
+  api("/api/job").then((j) => { if (j.busy) startJobPolling(); }).catch(() => {});
+})();
+</script>
+</body>
+</html>

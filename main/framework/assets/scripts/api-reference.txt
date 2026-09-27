@@ -1,0 +1,133 @@
+SZPI-OS 脚本接口参考（Lua）
+
+脚本放哪：TF 卡或内置存储的任意目录，扩展名 .lua（scripts 目录只是推荐位置）。
+在「脚本管理」里点击运行、长按可编辑或删除；运行中离开脚本页就会停止脚本。
+
+脚本头部注释（写在开头若干行内）：
+  -- @name 显示名
+  -- @desc 一句话说明
+  -- @perm io,file,net   声明要用到的模块；不写表示全部模块可用
+                        可声明：ui,sys,timer,input,event,io,file,audio,net,mqtt,ws,bt,camera,imu,settings,util,json,web
+
+调试：用 print(...) 输出，运行时显示在「运行日志」页（无界面脚本）或串口（标签 script）。
+出错会弹对话框给出文件与行号；脚本可以调 sys.exit() 自己退出。
+
+== 界面 ui ==
+  ui.page()                     建页面（返回内容容器；一个脚本一页）
+  ui.label(parent, text)        文字标签；label:set_text(s) 更新
+  ui.row(parent, left, text, fn) 整行入口：左边一个符号 / 短字，点击回调 fn
+  ui.button(parent, w, h, text, fn)  指定大小的按钮
+  ui.grid(parent, cols, item_w, item_h)  每行 cols 个的格子容器
+  ui.box(parent, w, h)          透明容器（分组摆放）
+  ui.list(parent[, title])      可滚动列表；ui.item(list, text[, value[, fn]]) 加一项
+  ui.input(parent[, placeholder[, on_ready]])  输入框，点它弹键盘，回车回调
+  ui.dialog(title, msg[, on_ok[, on_cancel]])  确认框
+  ui.progress(parent, title)    进度条；bar:set(0-100)
+  ui.image(parent, path)        按路径显示图片（TF 卡上的 PNG / JPEG / BMP / GIF）
+  ui.canvas(parent, w, h)       自己画像素的画布（宽必须偶数）
+  ui.toast(text)                短提示
+  控件通用方法：set_text / get_text / set_size（图片改尺寸即缩放）/ set_color（背景 0xRRGGBB）/
+                set_text_color / set_radius / set_value（行入口右侧数值）/ set_src（换图）
+  画布方法：fill(color) / rect(x, y, w, h, color) / line(x1, y1, x2, y2, color) /
+            circle(cx, cy, r, color)，颜色写 0xRRGGBB；坐标可以是小数（自动四舍五入）
+
+== 时间与系统 sys ==
+  sys.uptime()        开机至今秒数
+  sys.now()           当前 Unix 时间戳
+  sys.localtime()     表 { year, month, day, hour, min, sec }（没有 weekday）
+  sys.mem()           表 { internal_free, internal_min, psram_free }（字节）
+  sys.exit()          结束脚本（和点停止一样）
+
+== 定时器 timer ==
+  local id = timer.every(ms, fn)   周期执行，返回 id
+  local id = timer.after(ms, fn)   只执行一次
+  timer.cancel(id)                 取消
+
+== 输入 input / 事件 event ==
+  input.on_click(fn)   触摸点击，fn 收到 { x, y, pressed }（屏幕坐标）
+  event.subscribe(name, fn)   订阅事件；event.publish(name, data) 发自定义事件
+  可用事件名（与 EVENT_MAP 一一对应）：
+    touch / key（fn 收到 1 字节字符串，string.byte(v)：0 单击 1 双击 2 长按）
+    imu_motion / imu_orientation / imu_shake / imu_pickup
+    wifi_connected / wifi_disconnected / bt_state / brightness
+    sd_mounted / sd_unmounted / audio_record_finished
+    script_started / script_stopped / script_failed
+    自定义事件：名字以 user. 开头，同一名字稳定映射到同一事件号
+
+== 外扩硬件 io（只用外扩口 GPIO10 / GPIO11 与 I2C 总线 GPIO1 / GPIO2）==
+  io.gpio_write(gpio, level) / io.gpio_read(gpio)
+  io.pwm_set(gpio, freq_hz, duty_percent) / io.pwm_stop(gpio)
+  io.adc_read(gpio) -> 毫伏
+  io.i2c_write(addr, data) / io.i2c_read(addr, len)
+  io.i2c_write_reg(addr, reg, data) / io.i2c_read_reg(addr, reg, len)
+  io.uart_config(baud[, data_bits[, parity[, stop_bits]]]) / io.uart_write(data) / io.uart_read(len[, timeout_ms])
+  io.can_config(bitrate[, listen_only]) / io.can_stop() / io.can_send(id, data[, extended]) / io.can_receive(timeout_ms)
+  注意：UART / CAN 各占 GPIO10 + GPIO11，与 PWM 互斥，同一时刻只能用一种。
+
+== 文件 file ==
+  file.read(path) -> 内容（上限 1 MB）/ file.write(path, data) 覆盖写 / file.append(path, data) 追加
+  file.size(path) / file.remove(path) / file.exists(path) / file.list(dir) -> 名字数组
+  路径用 /sdcard/... 或 /internal/...
+
+== 音频 audio ==
+  audio.play(path) / audio.stop() / audio.tone(freq_hz[, ms]) 提示音
+  audio.record_start(path[, seconds]) / audio.record_stop() 录音（WAV）
+  audio.get_volume() / audio.set_volume(0-100) / audio.set_mute(bool)
+  外部 PCM 流：audio.stream_start(rate[, channels]) -> audio.write(pcm) ... -> audio.stream_stop()
+
+== 网络 net / mqtt / ws ==
+  local body, err = net.http_get(url[, opts])
+  local body, err = net.http_post(url, body[, opts])
+  opts = { timeout = ms, headers = "K: V\r\nK: V", content_type = "application/json" }
+  失败时 body 为 nil、err 形如 "HTTP 404"。阻塞调用，默认超时 15 秒。
+  支持 http:// 与 https://（https 用内置根证书校验，不需要额外配置）。
+  不跟随重定向，被跳转时返回 "HTTP 301"；请直接写跳转后的最终地址。
+  mqtt.connect(uri[, user[, pass]]) / mqtt.publish(topic, payload) / mqtt.subscribe(topic, fn)
+  mqtt.disconnect() / mqtt.is_connected()
+  ws.connect(url, fn) / ws.send(text) / ws.is_connected() / ws.close()
+  fn(data) 收消息；同一时刻只维持一个连接，重复 connect 会先断旧的
+
+== 网页 web（局域网里的浏览器访问，路由挂在 /s 底下）==
+  web.get(path, fn) / web.post(path, fn)   注册路由（最多 8 条），只在脚本运行期间有效
+  fn(req) 收到 { method, path, query（表）, query_string, body }，返回：
+          return "text/html; charset=utf-8", html
+          return 404, "text/plain", "没有这一页"      两值 / 三值（状态码在最前）都行
+          响应体上限 24 KB；回调要尽快返回（它慢多久整个 Web 控制台就等多久）
+  web.url()   网页地址（http://<设备IP>/s），没连上 Wi-Fi 时是 nil
+  web.ready() Web 控制台是否正在监听
+  离开脚本页脚本就停，网页随之失效；屏幕自动熄屏不影响
+
+== 蓝牙 bt ==
+  从机：bt.adv(bool) 开关广播 / bt.is_connected() / bt.notify(data) / bt.state_name()
+  扫描：bt.scan_start([seconds]) / bt.scan_stop() / bt.scan_results() -> { { name, bda, addr_type, rssi }, ... }
+  HID：bt.hid_key(usage[, modifier]) / bt.hid_mouse(buttons, dx, dy) / bt.hid_consumer(usage)
+  中心角色：bt.gatt_connect(bda[, addr_type]) / bt.gatt_disconnect() / bt.gatt_state() /
+            bt.gatt_discover() / bt.gatt_services() / bt.gatt_chars(service) /
+            bt.gatt_read(char) / bt.gatt_write(char, data) / bt.gatt_subscribe(char) /
+            bt.gatt_on_notify(fn(handle, data))；UUID 写 "0x180F" 或完整 128 位字符串
+
+== 摄像头 / 姿态 / 设置 ==
+  camera.open([jpeg]) / camera.close() / camera.is_open()
+  camera.capture(path) 把当前帧存成 24 位 BMP（RGB565 在设备侧转好，图库 / 电脑都能
+                      直接看；open(true) 的 JPEG 模式按码流原样落盘，本板基本用不了）
+  imu.read() -> { acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z, roll, pitch, yaw }
+  imu.is_moving() / imu.orientation() -> "portrait" / "landscape" / "portrait_flip" / "landscape_flip"
+  settings.get(key[, default]) / settings.set(key, value) / settings.get_int(key[, default]) /
+  settings.set_int(key, value)   所有脚本共用 NVS 里的 script 命名空间（key 自己起名避免撞车）
+
+== 文本工具 util / JSON json ==
+  util.base64_encode(s) / util.base64_decode(s) / util.hex_encode(s) / util.hex_decode(s)
+  json.decode(s) -> 表（解析失败给 nil）/ json.encode(表) -> 字符串
+
+== 数量上限（超了会报 Lua 错或截断）==
+  定时器 16 个、事件订阅 16 个、控件 256 个、画布 8 块（单块最大 320 x 212）
+  单次 Lua 调用 2000 万条指令（防死循环；长计算拆到多次定时回调里）
+  I2C 单次读 64 字节；HTTP 响应 4 KB、请求体 2 KB；MQTT / WebSocket 单条 192 字节
+  网页：路由 8 条、响应体 24 KB（脚本停止后路由即失效）
+
+== 示例脚本 ==
+  counter.lua  无界面：每秒 print 计数与时间戳，10 秒后自己退出
+  clock.lua    画布：指针式时钟
+  snake.lua    画布 + 触摸：贪吃蛇
+  io.lua       外扩接口状态与管理：I2C 扫描、GPIO 电平、PWM / UART / CAN 切换
+  gomoku.lua   网页：在局域网浏览器里下五子棋（用到 web 能力）

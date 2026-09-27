@@ -1,3 +1,4 @@
-idf_component_register(SRCS "main.c"
-                    PRIV_REQUIRES spi_flash
-                    INCLUDE_DIRS "")
+idf_component_register(
+    SRCS "main.c"
+    REQUIRES drivers peripherals services framework apps nvs_flash
+)

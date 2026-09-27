@@ -1,0 +1,188 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SZPI-OS
+ *
+ * Services - 设置实现（NVS 键值存储）
+ */
+
+#include "svc_common.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include <string.h>
+
+static const char *TAG = "svc.settings";
+
+esp_err_t svc_settings_init(void)
+{
+    ESP_LOGI(TAG, "initialized");
+    return ESP_OK;
+}
+
+esp_err_t svc_settings_set_i32(const char *ns, const char *key, int32_t val)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i32(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_i32(const char *ns, const char *key, int32_t *val, int32_t def)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    int32_t v = def;
+    err = nvs_get_i32(h, key, &v);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    if (val) *val = v;
+    return ESP_OK;
+}
+
+esp_err_t svc_settings_set_u32(const char *ns, const char *key, uint32_t val)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u32(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_u32(const char *ns, const char *key, uint32_t *val, uint32_t def)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    uint32_t v = def;
+    err = nvs_get_u32(h, key, &v);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    if (val) *val = v;
+    return ESP_OK;
+}
+
+esp_err_t svc_settings_set_u8(const char *ns, const char *key, uint8_t val)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_u8(const char *ns, const char *key, uint8_t *val, uint8_t def)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    uint8_t v = def;
+    err = nvs_get_u8(h, key, &v);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        if (val) *val = def;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    if (val) *val = v;
+    return ESP_OK;
+}
+
+esp_err_t svc_settings_set_str(const char *ns, const char *key, const char *val)
+{
+    if (val == NULL) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_t len, const char *def)
+{
+    if (buf == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+
+    buf[0] = '\0';   /* 任何失败路径都保证是空串，避免上层读到未初始化内容 */
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        if (def) strlcpy(buf, def, len);
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+
+    size_t l = len;
+    err = nvs_get_str(h, key, buf, &l);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        if (def) strlcpy(buf, def, len);
+        else     buf[0] = '\0';
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
+    }
+    return ESP_OK;
+}
+
+esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len)
+{
+    if (data == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(h, key, data, len);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len)
+{
+    if (buf == NULL || len == NULL || *len == 0) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_blob(h, key, buf, len);     /* *len 进为缓冲大小、出为实际长度 */
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_factory_reset(void)
+{
+    ESP_LOGW(TAG, "factory reset: erasing NVS partition");
+
+    esp_err_t err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_erase failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* 重新初始化，保证擦除后（重启前）其它组件再开句柄不会失败 */
+    err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init after erase failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}

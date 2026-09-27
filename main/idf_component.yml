@@ -1,16 +1,13 @@
-## IDF Component Manager Manifest File
+# ESP-IDF 组件管理器清单文件
 dependencies:
-  ## Required IDF version
   idf:
-    version: '>=4.1.0'
-  # # Put list of dependencies here
-  # # For components maintained by Espressif:
-  # component: "~1.0.0"
-  # # For 3rd party components:
-  # username/component: ">=1.0.0,<2.0.0"
-  # username2/component2:
-  #   version: "~1.0.0"
-  #   # For transient dependencies `public` flag can be set.
-  #   # `public` flag doesn't have an effect dependencies of the `main` component.
-  #   # All dependencies of `main` are public by default.
-  #   public: true
+    version: '>=6.1.0'
+  chmorgan/esp-libhelix-mp3: "~1.0.3"       # MP3 解码（svc_audio）
+  espressif/cjson: "^1.7.19"                # JSON 解析
+  espressif/esp32-camera: "^2.1.8"          # DVP 摄像头（GC0308 / GC2145，SCCB 复用 I2C0）
+  espressif/esp_lcd_touch_ft5x06: "~1.1.1"  # FT6336 触摸（I2C panel IO v2）
+  espressif/esp_lvgl_port: "~2.9.0"         # LVGL 适配层（显示 + lvgl_port_lock/unlock）
+  espressif/esp_websocket_client: "^1.8.0"  # WebSocket 客户端（svc_ws）
+  espressif/lua: "~5.5.0"                   # Lua 5.5 运行时（fw_script）
+  espressif/mqtt: "^1.1.0"                  # MQTT 客户端（svc_mqtt）
+  lvgl/lvgl: "~9.6.0"                       # GUI 库

@@ -1,0 +1,1337 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SZPI-OS
+ *
+ * Services - 网络实现（Wi-Fi STA / 配网 / HTTP 客户端）
+ *
+ * 已支持：Wi-Fi STA（启动 / 停止 / 扫描 / 连接 / 断开 / 自动重连 / 状态）、
+ *         凭据持久化（NVS 命名空间 wifi）、事件发布、连接成功后触发 SNTP、
+ *         HTTP GET / POST、SmartConfig 配网、AP + HTTP 配网页。
+ * MQTT / WebSocket 在各自的服务里（svc_mqtt / svc_ws）。
+ */
+
+#include "svc_common.h"
+#include "esp_log.h"
+#include "esp_wifi.h"
+#include "esp_wifi_default.h"
+#include "esp_smartconfig.h"
+#include "esp_http_server.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
+static const char *TAG = "svc.net";
+
+#define NET_NS              "wifi"
+#define NET_SCAN_POLL_MS    100
+#define NET_MAX_RETRY       5
+
+static esp_netif_t *s_netif = NULL;
+static bool s_wifi_inited = false;
+static bool s_started = false;
+static wifi_mode_t s_mode = WIFI_MODE_NULL;
+static volatile bool s_connecting = false;
+static volatile bool s_connect_pending = false;
+static volatile bool s_user_disconnect = false;
+static volatile bool s_scan_done = false;
+static volatile uint8_t s_retry_count = 0;
+static svc_net_status_t s_status;
+static volatile bool s_smartconfig = false;      /* SmartConfig 配网中 */
+static SemaphoreHandle_t s_status_mux = NULL;   /* s_status 由 Wi-Fi 事件任务写、被任意任务读 */
+
+static void status_lock(void)
+{
+    if (s_status_mux != NULL) xSemaphoreTake(s_status_mux, portMAX_DELAY);
+}
+
+static void status_unlock(void)
+{
+    if (s_status_mux != NULL) xSemaphoreGive(s_status_mux);
+}
+
+static const char *reason_str(int reason)
+{
+    switch (reason) {
+    case 201: return "NO_AP_FOUND";
+    case 202: return "AUTH_FAIL";
+    case 203: return "ASSOC_FAIL";
+    case 204: return "HANDSHAKE_TIMEOUT";
+    case 205: return "CONNECTION_FAIL";
+    case 210: return "NO_AP_FOUND_W_COMPATIBLE_SECURITY";
+    case 211: return "NO_AP_FOUND_IN_AUTHMODE_THRESHOLD";
+    case 212: return "NO_AP_FOUND_IN_RSSI_THRESHOLD";
+    default:  return "OTHER";
+    }
+}
+
+static void handle_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data);
+static void handle_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data);
+static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *data);
+
+static void handle_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    (void)base;
+
+    switch (id) {
+    case WIFI_EVENT_SCAN_DONE:
+        s_scan_done = true;
+        svc_event_bus_publish(SVC_EVENT_WIFI_SCAN_DONE, NULL, 0);
+        break;
+
+    case WIFI_EVENT_STA_START:
+        if (s_connect_pending) {
+            s_connect_pending = false;
+            esp_wifi_connect();   /* start 完成前发出的连接请求，在此补上 */
+        }
+        break;
+
+    case WIFI_EVENT_STA_CONNECTED:
+        ESP_LOGI(TAG, "connected to AP");
+        /* 已用保存的凭据连上（或 SmartConfig 期间自己连上了）就停掉配网嗅探：
+         * 不停的话 SC 一直想设信道，串口会刷 "cannot set channel" + "errno -1" */
+        if (s_smartconfig) (void)svc_net_smartconfig_stop();
+        break;
+
+    case WIFI_EVENT_STA_DISCONNECTED: {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
+        int reason = (d != NULL) ? d->reason : -1;
+        ESP_LOGW(TAG, "disconnected (reason=%d %s)", reason, reason_str(reason));
+
+        bool was_connecting = s_connecting;
+        s_connecting = false;
+
+        status_lock();
+        s_status.wifi_connected = false;
+        s_status.rssi = 0;
+        memset(s_status.wifi_ssid, 0, sizeof(s_status.wifi_ssid));
+        memset(s_status.ip_addr, 0, sizeof(s_status.ip_addr));
+        status_unlock();
+
+        if (was_connecting) {
+            svc_event_bus_publish(SVC_EVENT_WIFI_CONNECT_FAILED, NULL, 0);
+        }
+        svc_event_bus_publish(SVC_EVENT_WIFI_DISCONNECTED, NULL, 0);
+
+        if (!s_user_disconnect) {
+            if (s_retry_count < NET_MAX_RETRY) {
+                s_retry_count++;
+                ESP_LOGI(TAG, "reconnect %u/%u", (unsigned)s_retry_count, (unsigned)NET_MAX_RETRY);
+                esp_wifi_connect();
+            } else {
+                s_user_disconnect = true;   /* 停止自动重连，等应用显式重连 */
+                ESP_LOGW(TAG, "give up after %u attempts", (unsigned)NET_MAX_RETRY);
+                svc_event_bus_publish(SVC_EVENT_WIFI_CONNECT_FAILED, NULL, 0);
+            }
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+static void handle_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    (void)base;
+
+    if (id != IP_EVENT_STA_GOT_IP) return;
+
+    ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
+    char ip[sizeof(s_status.ip_addr)];
+    snprintf(ip, sizeof(ip), IPSTR, IP2STR(&e->ip_info.ip));
+
+    wifi_ap_record_t ap;
+    bool have_ap = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+
+    status_lock();
+    strlcpy(s_status.ip_addr, ip, sizeof(s_status.ip_addr));
+    if (have_ap) {
+        strlcpy(s_status.wifi_ssid, (const char *)ap.ssid, sizeof(s_status.wifi_ssid));
+        s_status.rssi = ap.rssi;
+    }
+    s_status.wifi_connected = true;
+    status_unlock();
+
+    s_connecting = false;
+    s_connect_pending = false;
+    s_retry_count = 0;
+
+    ESP_LOGI(TAG, "got ip: %s", ip);
+    svc_event_bus_publish(SVC_EVENT_WIFI_CONNECTED, NULL, 0);
+    svc_time_sync_ntp();   /* 连上就同步时间（svc_time 侧也会订阅，双保险） */
+}
+
+esp_err_t svc_net_init(void)
+{
+    if (s_wifi_inited) return ESP_OK;
+
+    if (s_status_mux == NULL) {
+        s_status_mux = xSemaphoreCreateMutex();
+        if (s_status_mux == NULL) return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+
+    s_netif = esp_netif_create_default_wifi_sta();
+    if (s_netif == NULL) return ESP_FAIL;
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    err = esp_wifi_init(&cfg);
+    if (err != ESP_OK) return err;
+
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* 凭据由 svc_settings 持久化 */
+    if (err != ESP_OK) return err;
+
+    err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, NULL, NULL);
+    if (err != ESP_OK) return err;
+    err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, handle_ip_event, NULL, NULL);
+    if (err != ESP_OK) return err;
+
+    /* SmartConfig 事件只注册一次：每 start 一次都注册会在反复配网时累积回调，
+     * 同一个广播被处理多次（表现是重复 "smartconfig got ssid" 与多余的连接重建） */
+    err = esp_event_handler_instance_register(SC_EVENT, ESP_EVENT_ANY_ID, handle_sc_event, NULL, NULL);
+    if (err != ESP_OK) return err;
+
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) return err;
+
+    memset(&s_status, 0, sizeof(s_status));
+    s_wifi_inited = true;
+    ESP_LOGI(TAG, "initialized");
+
+    svc_net_wifi_auto_connect();
+    return ESP_OK;
+}
+
+esp_err_t svc_net_wifi_start(svc_net_mode_t mode)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    if (mode == SVC_NET_MODE_OFF) return svc_net_wifi_stop();
+
+    /* 只实现了 STA：AP / STA_AP 没有配置热点参数，不能假装支持 */
+    if (mode == SVC_NET_MODE_AP || mode == SVC_NET_MODE_STA_AP) {
+        ESP_LOGW(TAG, "AP mode not supported yet");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    const wifi_mode_t m = WIFI_MODE_STA;
+
+    /* 已经在同一模式下运行就不重复 start（避免刷日志与多余的 IDF 调用） */
+    if (s_started && s_mode == m) return ESP_OK;
+
+    s_user_disconnect = false;
+
+    esp_err_t err = esp_wifi_set_mode(m);
+    if (err != ESP_OK) return err;
+
+    err = esp_wifi_start();
+    if (err == ESP_OK) {
+        s_started = true;
+        s_mode = m;
+    }
+
+    ESP_LOGI(TAG, "wifi start (mode=%d): %s", mode, esp_err_to_name(err));
+    return err;
+}
+
+esp_err_t svc_net_wifi_stop(void)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    s_user_disconnect = true;
+    s_started = false;
+    s_mode = WIFI_MODE_NULL;
+    s_connecting = false;
+    s_connect_pending = false;
+
+    status_lock();
+    s_status.wifi_connected = false;
+    status_unlock();
+
+    return esp_wifi_stop();
+}
+
+esp_err_t svc_net_wifi_scan(svc_net_wifi_ap_t *aps, size_t max_aps, size_t *found, uint32_t timeout_ms)
+{
+    if (found != NULL) *found = 0;
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    /* 没有保存凭据时开机不会启动 Wi-Fi（auto_connect 直接返回），而扫描/连接都要求
+     * 驱动已经 start：这里先确保 STA 起来，否则扫描直接返回 INVALID_STATE、界面只看到空列表 */
+    if (!s_started) {
+        esp_err_t serr = svc_net_wifi_start(SVC_NET_MODE_STA);
+        if (serr != ESP_OK) {
+            ESP_LOGW(TAG, "scan: wifi start failed: %s", esp_err_to_name(serr));
+            return serr;
+        }
+    }
+
+    s_scan_done = false;
+    svc_event_bus_publish(SVC_EVENT_WIFI_SCAN_STARTED, NULL, 0);
+
+    esp_err_t err = esp_wifi_scan_start(NULL, false);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "scan start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    uint32_t waited = 0;
+    while (!s_scan_done && (timeout_ms == 0 || waited < timeout_ms)) {
+        vTaskDelay(pdMS_TO_TICKS(NET_SCAN_POLL_MS));
+        waited += NET_SCAN_POLL_MS;
+    }
+
+    if (!s_scan_done) {
+        esp_wifi_scan_stop();
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* esp_wifi_scan_get_ap_records() 要求有效缓冲区，即使只是想释放扫描结果 */
+    uint16_t num = (aps != NULL && max_aps > 0) ? (uint16_t)max_aps : 1;
+    wifi_ap_record_t *recs = calloc(num, sizeof(wifi_ap_record_t));
+    if (recs == NULL) return ESP_ERR_NO_MEM;
+
+    err = esp_wifi_scan_get_ap_records(&num, recs);
+    if (err == ESP_OK) {
+        if (aps != NULL && max_aps > 0) {
+            for (uint16_t i = 0; i < num; i++) {
+                strlcpy(aps[i].ssid, (const char *)recs[i].ssid, sizeof(aps[i].ssid));
+                aps[i].rssi = recs[i].rssi;
+                aps[i].auth_mode = (uint8_t)recs[i].authmode;
+            }
+        }
+        if (found != NULL) *found = num;
+    }
+
+    free(recs);
+    return err;
+}
+
+esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds)
+{
+    if (creds == NULL || creds->ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    /* 同上：先把 STA 起来再 connect，否则只会拿到 NOT_STARTED，
+     * "等 STA_START 再补连" 的 pending 永远等不到（配网走的 APSTA 已 start，不重复动） */
+    if (!s_started) {
+        esp_err_t serr = svc_net_wifi_start(SVC_NET_MODE_STA);
+        if (serr != ESP_OK) {
+            ESP_LOGW(TAG, "connect: wifi start failed: %s", esp_err_to_name(serr));
+            return serr;
+        }
+    }
+
+    /* 已经连在这个网络上就不要再连一次（否则 IDF 会先断开再重连并告警） */
+    svc_net_status_t st;
+    svc_net_get_status(&st);
+    if (st.wifi_connected && strcmp(st.wifi_ssid, creds->ssid) == 0) {
+        ESP_LOGI(TAG, "already connected to %s", creds->ssid);
+        return ESP_OK;
+    }
+
+    wifi_config_t wc;
+    memset(&wc, 0, sizeof(wc));
+    strlcpy((char *)wc.sta.ssid, creds->ssid, sizeof(wc.sta.ssid));
+    strlcpy((char *)wc.sta.password, creds->password, sizeof(wc.sta.password));
+    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wc.sta.pmf_cfg.capable = true;        /* 兼容 WPA3 / PMF（required=false 保持兼容 WPA2） */
+    wc.sta.pmf_cfg.required = false;
+    wc.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wc);
+    if (err != ESP_OK) return err;
+
+    svc_settings_set_str(NET_NS, "ssid", creds->ssid);
+    svc_settings_set_str(NET_NS, "pass", creds->password);
+
+    s_user_disconnect = false;
+    s_connecting = true;
+    s_connect_pending = true;
+    s_retry_count = 0;
+
+    svc_event_bus_publish(SVC_EVENT_WIFI_CONNECTING, NULL, 0);
+    ESP_LOGI(TAG, "connecting to %s", creds->ssid);
+
+    err = esp_wifi_connect();
+    if (err == ESP_ERR_WIFI_NOT_STARTED || err == ESP_ERR_WIFI_CONN) {
+        /* 还没启动完成，或驱动正在收尾：保持 pending，
+         * 交给 WIFI_EVENT_STA_START / 断线回调里补连 */
+        ESP_LOGI(TAG, "connect deferred (%s)", esp_err_to_name(err));
+        return ESP_OK;
+    }
+    if (err == ESP_OK) {
+        s_connect_pending = false;
+    }
+    return err;
+}
+
+esp_err_t svc_net_wifi_disconnect(void)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    s_user_disconnect = true;
+    s_connecting = false;
+    return esp_wifi_disconnect();
+}
+
+esp_err_t svc_net_wifi_auto_connect(void)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    char ssid[33] = { 0 };
+    char pass[64] = { 0 };
+    svc_settings_get_str(NET_NS, "ssid", ssid, sizeof(ssid), "");
+    if (ssid[0] == '\0') {
+        ESP_LOGI(TAG, "no saved credentials, skip auto connect");
+        return ESP_ERR_NOT_FOUND;
+    }
+    svc_settings_get_str(NET_NS, "pass", pass, sizeof(pass), "");
+    if (pass[0] == '\0') {
+        ESP_LOGW(TAG, "saved SSID '%s' has no password; only open APs can match", ssid);
+    }
+
+    esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
+    if (err != ESP_OK) return err;
+
+    svc_net_wifi_creds_t creds;
+    memset(&creds, 0, sizeof(creds));
+    strlcpy(creds.ssid, ssid, sizeof(creds.ssid));
+    strlcpy(creds.password, pass, sizeof(creds.password));
+
+    return svc_net_wifi_connect(&creds);
+}
+
+esp_err_t svc_net_wifi_forget(void)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    svc_settings_set_str(NET_NS, "ssid", "");
+    svc_settings_set_str(NET_NS, "pass", "");
+
+    s_user_disconnect = true;
+    s_connecting = false;
+    s_connect_pending = false;
+    s_retry_count = 0;
+
+    esp_wifi_disconnect();
+
+    /* 只清 NVS 不够：驱动里（WIFI_STORAGE_RAM）还留着 STA 配置，
+     * 下次 esp_wifi_start() 会拿旧配置自动连回去。这里把 STA 配置一并清掉 */
+    wifi_config_t empty;
+    memset(&empty, 0, sizeof(empty));
+    esp_wifi_set_config(WIFI_IF_STA, &empty);
+
+    esp_wifi_stop();
+    s_started = false;
+    s_mode = WIFI_MODE_NULL;
+
+    status_lock();
+    memset(&s_status, 0, sizeof(s_status));
+    status_unlock();
+
+    ESP_LOGI(TAG, "saved credentials cleared");
+    return ESP_OK;
+}
+
+esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len)
+{
+    if (buf == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+
+    svc_settings_get_str(NET_NS, "ssid", buf, len, "");
+    return (buf[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+/* ------------------------------- SmartConfig ------------------------------- */
+
+/* 手机 App（ESPTouch）把 SSID / 密码广播出来，这里收到后直接连接并持久化。
+ * 手机是反复广播的，同一个事件会送达多次；只在配网进行中处理一次，
+ * 否则会反复 esp_wifi_set_config（"sta is connecting, cannot set config"）把刚建立的连接打断 */
+static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    (void)base;
+
+    if (!s_smartconfig) return;
+
+    if (id == SC_EVENT_GOT_SSID_PSWD) {
+        const smartconfig_event_got_ssid_pswd_t *e =
+            (const smartconfig_event_got_ssid_pswd_t *)data;
+
+        svc_net_wifi_creds_t creds;
+        memset(&creds, 0, sizeof(creds));
+        strlcpy(creds.ssid, (const char *)e->ssid, sizeof(creds.ssid));
+        strlcpy(creds.password, (const char *)e->password, sizeof(creds.password));
+        ESP_LOGI(TAG, "smartconfig got ssid: %s", creds.ssid);
+
+        s_smartconfig = false;              /* 先置位，后续重复广播直接忽略 */
+        esp_smartconfig_stop();
+        svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
+    } else if (id == SC_EVENT_SEND_ACK_DONE) {
+        ESP_LOGI(TAG, "smartconfig finished");
+        s_smartconfig = false;
+        esp_smartconfig_stop();
+    }
+}
+
+esp_err_t svc_net_smartconfig_start(void)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    if (s_smartconfig) return ESP_OK;
+
+    /* 配网期间 STA 必须在跑（监听手机广播） */
+    esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
+    if (err != ESP_OK) return err;
+
+    err = esp_smartconfig_set_type(SC_TYPE_ESPTOUCH);
+    if (err != ESP_OK) return err;
+
+    const smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
+    err = esp_smartconfig_start(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "smartconfig start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    s_smartconfig = true;
+    ESP_LOGI(TAG, "smartconfig started (waiting for ESPTouch)");
+    return ESP_OK;
+}
+
+esp_err_t svc_net_smartconfig_stop(void)
+{
+    if (!s_smartconfig) return ESP_ERR_INVALID_STATE;
+
+    esp_err_t err = esp_smartconfig_stop();
+    s_smartconfig = false;
+    ESP_LOGI(TAG, "smartconfig stopped");
+    return err;
+}
+
+/* ------------------------------ AP / Web 配网 ------------------------------ */
+
+static httpd_handle_t s_prov_httpd = NULL;
+static esp_netif_t *s_prov_netif = NULL;
+static volatile bool s_prov_active = false;
+/* 用户在配网页提交的目标网络：只有它连上了才算配网成功、才关热点。
+ * 配网期间 STA 可能自动连回旧网络（驱动里还留着配置），那种 Connected 事件不能收尾 */
+static char s_prov_target[33] = { 0 };
+
+/* 极简 URL 解码：%XX → 字符，'+' → 空格 */
+static void url_decode(char *dst, size_t dst_len, const char *src)
+{
+    size_t di = 0;
+
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dst_len; si++) {
+        char c = src[si];
+        if (c == '+') {
+            dst[di++] = ' ';
+        } else if (c == '%' && src[si + 1] != '\0' && src[si + 2] != '\0') {
+            char hex[3] = { src[si + 1], src[si + 2], '\0' };
+            dst[di++] = (char)strtol(hex, NULL, 16);
+            si += 2;
+        } else {
+            dst[di++] = c;
+        }
+    }
+    dst[di] = '\0';
+}
+
+/* 从 x-www-form-urlencoded 里取字段（值自动解码）；没找到返回 false */
+static bool form_get(const char *body, const char *key, char *out, size_t out_len)
+{
+    size_t klen = strlen(key);
+    const char *p = body;
+
+    while ((p = strstr(p, key)) != NULL) {
+        if ((p == body || p[-1] == '&') && p[klen] == '=') {
+            const char *val = p + klen + 1;
+            const char *end = strchr(val, '&');
+            size_t vlen = (end != NULL) ? (size_t)(end - val) : strlen(val);
+
+            char raw[256];
+            if (vlen >= sizeof(raw)) vlen = sizeof(raw) - 1;
+            memcpy(raw, val, vlen);
+            raw[vlen] = '\0';
+            url_decode(out, out_len, raw);
+            return true;
+        }
+        p += klen;
+    }
+    return false;
+}
+
+static esp_err_t prov_get_handler(httpd_req_t *req)
+{
+    static const char page[] =
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>" SZPI_OS_NAME " 配网</title></head><body>"
+        "<h3>" SZPI_OS_NAME " Wi-Fi 配网</h3>"
+        "<form method=\"post\" action=\"/save\">"
+        "SSID<br><input name=\"ssid\" maxlength=\"32\" size=\"24\"><br><br>"
+        "密码<br><input name=\"password\" type=\"password\" maxlength=\"64\" size=\"24\"><br><br>"
+        "<button type=\"submit\">保存并连接</button></form>"
+        "</body></html>";
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t prov_save_handler(httpd_req_t *req)
+{
+    /* 表单里 SSID / 密码都是 url 编码的，一个字节最多变成 3 个（%XX），缓冲按 3 倍留够，
+     * 否则密码会被截断 */
+    char body[640];
+    int limit = (req->content_len < (int)sizeof(body) - 1) ? (int)req->content_len : (int)sizeof(body) - 1;
+    if (limit <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+
+    int rd = httpd_req_recv(req, body, limit);
+    if (rd <= 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+        return ESP_FAIL;
+    }
+    body[rd] = '\0';
+
+    char ssid[33] = { 0 };
+    char pass[65] = { 0 };
+    if (!form_get(body, "ssid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
+        return ESP_FAIL;
+    }
+    form_get(body, "password", pass, sizeof(pass));
+
+    static const char ok_page[] =
+        "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+        "<h3>已保存</h3><p>" SZPI_OS_NAME " 正在连接该网络，可以关闭此页面。</p></body></html>";
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send(req, ok_page, HTTPD_RESP_USE_STRLEN);
+
+    ESP_LOGI(TAG, "provisioning: got ssid '%s'", ssid);
+
+    svc_net_wifi_creds_t creds;
+    memset(&creds, 0, sizeof(creds));
+    strlcpy(creds.ssid, ssid, sizeof(creds.ssid));
+    strlcpy(creds.password, pass, sizeof(creds.password));
+
+    /* 记下目标网络，只有它连上才关热点（配网期间 STA 自动连回旧网络不算） */
+    strlcpy(s_prov_target, creds.ssid, sizeof(s_prov_target));
+    svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
+
+    /* 热点与 HTTP 服务在连上目标 AP（拿到 IP）后由事件回调关闭 */
+    return ESP_OK;
+}
+
+/* 配网成功（提交的目标网络拿到 IP）后自动收尾：不在 Wi-Fi 事件任务里直接停 Wi-Fi。
+ * 只认 s_prov_target：配网期间 STA 自动连回旧网络产生的 Connected 事件不能关热点 */
+static void prov_connected_cb(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+
+    if (!s_prov_active || s_prov_target[0] == '\0') return;
+
+    svc_net_status_t st;
+    if (svc_net_get_status(&st) != ESP_OK) return;
+    if (!st.wifi_connected || strcmp(st.wifi_ssid, s_prov_target) != 0) return;
+
+    s_prov_target[0] = '\0';
+    svc_net_prov_stop();
+}
+
+/* 配网启动失败时回到纯 STA 并恢复自动重连，别把热点留在没有配置页的 APSTA 下 */
+static void prov_back_to_sta(void)
+{
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+    s_mode = WIFI_MODE_STA;
+    s_started = true;
+    s_prov_target[0] = '\0';
+    svc_net_wifi_auto_connect();
+}
+
+esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    if (s_prov_active) return ESP_OK;
+
+    const char *ssid = (ap_ssid != NULL && ap_ssid[0] != '\0') ? ap_ssid : svc_identity_ap_ssid();
+
+    if (s_prov_netif == NULL) {
+        s_prov_netif = esp_netif_create_default_wifi_ap();
+        if (s_prov_netif == NULL) return ESP_FAIL;
+    }
+
+    wifi_config_t wc;
+    memset(&wc, 0, sizeof(wc));
+    size_t ssid_len = strlen(ssid);
+    if (ssid_len > sizeof(wc.ap.ssid)) ssid_len = sizeof(wc.ap.ssid);
+    strlcpy((char *)wc.ap.ssid, ssid, sizeof(wc.ap.ssid));
+    wc.ap.ssid_len = (uint8_t)ssid_len;
+    wc.ap.ssid_hidden = 0;             /* 显式广播，别让电脑 / 手机扫不到 */
+    wc.ap.channel = 1;
+    wc.ap.max_connection = 2;
+    wc.ap.authmode = WIFI_AUTH_OPEN;
+    if (ap_password != NULL && strlen(ap_password) >= 8) {
+        strlcpy((char *)wc.ap.password, ap_password, sizeof(wc.ap.password));
+        wc.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    }
+
+    /* 切到 APSTA 需要停一次再起（STA 的配置与凭据会保留） */
+    esp_wifi_stop();
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &wc);
+    if (err == ESP_OK) err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "provisioning AP start failed: %s", esp_err_to_name(err));
+        prov_back_to_sta();
+        return err;
+    }
+
+    s_mode = WIFI_MODE_APSTA;
+    s_started = true;
+    s_user_disconnect = false;
+    s_retry_count = 0;
+
+    /* 有保存的凭据就让 STA 侧照常补连；没凭据时不要发空的 connect（只等配网页提交） */
+    char saved_ssid[33] = { 0 };
+    s_connect_pending = (svc_net_wifi_get_saved_ssid(saved_ssid, sizeof(saved_ssid)) == ESP_OK);
+
+    httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
+    hc.max_uri_handlers = 4;
+    hc.lru_purge_enable = true;
+    err = httpd_start(&s_prov_httpd, &hc);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "provisioning httpd start failed: %s", esp_err_to_name(err));
+        s_prov_httpd = NULL;
+        prov_back_to_sta();           /* 别把热点留在没有配置页的 APSTA 下 */
+        return err;
+    }
+
+    const httpd_uri_t uri_root = {
+        .uri = "/", .method = HTTP_GET, .handler = prov_get_handler, .user_ctx = NULL,
+    };
+    const httpd_uri_t uri_save = {
+        .uri = "/save", .method = HTTP_POST, .handler = prov_save_handler, .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(s_prov_httpd, &uri_root);
+    httpd_register_uri_handler(s_prov_httpd, &uri_save);
+
+    svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb, NULL);
+    s_prov_target[0] = '\0';           /* 还没提交目标网络：期间任何 Connected 事件都不收尾 */
+    s_prov_active = true;
+    ESP_LOGI(TAG, "provisioning started: AP '%s' ch=%u (%s), browse http://192.168.4.1/",
+             ssid, (unsigned)wc.ap.channel,
+             (wc.ap.authmode == WIFI_AUTH_OPEN) ? "open" : "wpa2");
+    return ESP_OK;
+}
+
+esp_err_t svc_net_prov_stop(void)
+{
+    if (!s_prov_active) return ESP_OK;
+
+    s_prov_active = false;
+    s_prov_target[0] = '\0';
+    svc_event_bus_unsubscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb);
+
+    if (s_prov_httpd != NULL) {
+        httpd_stop(s_prov_httpd);
+        s_prov_httpd = NULL;
+    }
+
+    /* 回到纯 STA 模式，继续连接目标 AP */
+    esp_wifi_stop();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+    s_mode = WIFI_MODE_STA;
+    s_started = true;
+
+    /* 上面的 stop/start 会把刚建立的连接断掉，而 STA_START 只在 s_connect_pending
+     * 为真时才补连（拿到 IP 时它已被清掉）：按保存的凭据再连一次，避免"配网成功了
+     * 却一直连不上"；没有保存凭据就自然跳过 */
+    s_connect_pending = false;
+    s_retry_count = 0;
+    svc_net_wifi_auto_connect();
+
+    ESP_LOGI(TAG, "provisioning stopped");
+    return ESP_OK;
+}
+
+bool svc_net_prov_is_active(void)
+{
+    return s_prov_active;
+}
+
+esp_err_t svc_net_get_status(svc_net_status_t *status)
+{
+    if (status == NULL) return ESP_ERR_INVALID_ARG;
+
+    status_lock();
+    *status = s_status;          /* 快照拷贝，避免读到写一半的状态 */
+    status_unlock();
+    return ESP_OK;
+}
+
+/* 请求方法与 esp_http_client 的映射 */
+static esp_http_client_method_t http_method_of(const char *method)
+{
+    if (method == NULL) return HTTP_METHOD_GET;
+    if (strcasecmp(method, "POST") == 0) return HTTP_METHOD_POST;
+    if (strcasecmp(method, "PUT") == 0) return HTTP_METHOD_PUT;
+    if (strcasecmp(method, "DELETE") == 0) return HTTP_METHOD_DELETE;
+    if (strcasecmp(method, "PATCH") == 0) return HTTP_METHOD_PATCH;
+    if (strcasecmp(method, "HEAD") == 0) return HTTP_METHOD_HEAD;
+    return HTTP_METHOD_GET;
+}
+
+/* 逐条设置额外请求头；headers 已被 strdup，就地按行切开（"K: V\r\nK: V"） */
+static void http_apply_headers(esp_http_client_handle_t c, char *headers)
+{
+    char *line = headers;
+    while (line != NULL && *line != '\0') {
+        char *next = strpbrk(line, "\r\n");
+        if (next != NULL) {
+            *next = '\0';
+            next++;
+            while (*next == '\r' || *next == '\n') next++;
+            if (*next == '\0') next = NULL;
+        }
+
+        char *colon = strchr(line, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            char *value = colon + 1;
+            while (*value == ' ' || *value == '\t') value++;
+            esp_http_client_set_header(c, line, value);
+        }
+        line = next;
+    }
+}
+
+/* 最后一次响应的状态码（0 = 还没拿到响应），供上层区分"服务器拒绝"和"设备错误" */
+static volatile int s_http_last_status = 0;
+
+int svc_http_last_status(void)
+{
+    return s_http_last_status;
+}
+
+esp_err_t svc_http_request(const svc_http_request_t *req, char *resp_buf, size_t buf_len,
+                           uint32_t timeout_ms)
+{
+    if (req == NULL || req->url == NULL || resp_buf == NULL || buf_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (req->body != NULL && (req->body_len == 0 || req->body_len > SVC_HTTP_BODY_MAX)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    s_http_last_status = 0;
+
+    esp_http_client_config_t cfg = {
+        .url = req->url,
+        .timeout_ms = (int)timeout_ms,
+        .crt_bundle_attach = esp_crt_bundle_attach,   /* https 走内置证书 bundle */
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (c == NULL) return ESP_FAIL;
+
+    esp_http_client_set_method(c, http_method_of(req->method));
+
+    if (req->content_type != NULL && req->content_type[0] != '\0') {
+        esp_http_client_set_header(c, "Content-Type", req->content_type);
+    }
+
+    if (req->headers != NULL && req->headers[0] != '\0') {
+        char *hdr = strdup(req->headers);           /* 要就地切分，别改调用者的常量串 */
+        if (hdr == NULL) {
+            esp_http_client_cleanup(c);
+            return ESP_ERR_NO_MEM;
+        }
+        http_apply_headers(c, hdr);
+        free(hdr);
+    }
+
+    const int body_len = (req->body != NULL) ? (int)req->body_len : 0;
+    esp_err_t err = esp_http_client_open(c, body_len);
+    if (err != ESP_OK) {
+        esp_http_client_cleanup(c);
+        return err;
+    }
+
+    if (body_len > 0 && esp_http_client_write(c, req->body, body_len) < 0) {
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+        return ESP_FAIL;
+    }
+
+    if (esp_http_client_fetch_headers(c) < 0) {
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+        return ESP_FAIL;
+    }
+
+    const int status = esp_http_client_get_status_code(c);
+    s_http_last_status = status;
+
+    /* 循环读到缓冲满：单次 read 可能只返回一部分。非 2xx 也把响应体读出来
+     *（服务器的报错正文常常有用），但返回错误码，由 svc_http_last_status() 给状态 */
+    size_t total = 0;
+    err = (status >= 200 && status < 300) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+    while (total < buf_len - 1) {
+        const int rd = esp_http_client_read(c, resp_buf + total, (int)(buf_len - 1 - total));
+        if (rd < 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        if (rd == 0) break;                      /* 数据读完 */
+        total += (size_t)rd;
+    }
+    resp_buf[total] = '\0';
+    if (total == buf_len - 1) {
+        ESP_LOGW(TAG, "response truncated to %u bytes", (unsigned)total);
+    }
+    if (status < 200 || status >= 300) {
+        ESP_LOGW(TAG, "HTTP %d: %s", status, req->url);
+    }
+
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    return err;
+}
+
+esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t timeout_ms)
+{
+    const svc_http_request_t req = { .method = "GET", .url = url };
+
+    return svc_http_request(&req, resp_buf, buf_len, timeout_ms);
+}
+
+/* ------------------------------ 异步 GET ------------------------------ */
+
+#define SVC_HTTP_URL_MAX      512    /* 天气请求实测 367 字节，256 会直接 INVALID_SIZE */
+#define SVC_HTTP_TASK_STACK   6144
+#define SVC_HTTP_ASYNC_TIMEOUT_MS  15000
+
+typedef struct {
+    char url[SVC_HTTP_URL_MAX];
+    char *buf;
+    size_t buf_len;
+    svc_http_cb_t cb;
+    void *user;
+} svc_http_req_t;
+
+static void svc_http_task(void *arg)
+{
+    svc_http_req_t *req = (svc_http_req_t *)arg;
+
+    esp_err_t err = svc_http_get(req->url, req->buf, req->buf_len, SVC_HTTP_ASYNC_TIMEOUT_MS);
+    if (err != ESP_OK) req->buf[0] = '\0';
+
+    if (req->cb != NULL) {
+        req->cb(req->buf, err, req->user);
+    }
+
+    free(req);
+    vTaskDelete(NULL);
+}
+
+esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
+                             svc_http_cb_t cb, void *user)
+{
+    if (url == NULL || resp_buf == NULL || buf_len == 0) return ESP_ERR_INVALID_ARG;
+    if (strlen(url) >= SVC_HTTP_URL_MAX) return ESP_ERR_INVALID_SIZE;
+
+    svc_http_req_t *req = calloc(1, sizeof(*req));
+    if (req == NULL) return ESP_ERR_NO_MEM;
+
+    strlcpy(req->url, url, sizeof(req->url));
+    req->buf = resp_buf;
+    req->buf_len = buf_len;
+    req->cb = cb;
+    req->user = user;
+
+    if (xTaskCreate(svc_http_task, "svc.http", SVC_HTTP_TASK_STACK, req, 5, NULL) != pdPASS) {
+        free(req);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "http get (async): %s", url);
+    return ESP_OK;
+}
+
+/* ------------------------------ 异步下载 ------------------------------ */
+
+#define SVC_HTTP_PATH_MAX      256
+#define SVC_HTTP_DL_CHUNK      2048
+#define SVC_HTTP_DL_STACK      6144
+#define SVC_HTTP_DL_MAX_REDIRECT  5
+/* 有些站点对空 User-Agent 直接拒；给一个能认出来源又像浏览器的 */
+#define SVC_HTTP_UA            "Mozilla/5.0 (compatible; " SZPI_OS_NAME ")"
+
+typedef struct {
+    char url[SVC_HTTP_URL_MAX];
+    char path[SVC_HTTP_PATH_MAX];
+    svc_http_progress_cb_t cb;
+    svc_http_name_cb_t name_cb;
+    void *user;
+    size_t resume_from;              /* > 0 时带 Range 从断点续传 */
+} svc_http_dl_t;
+
+/* 下载控制：暂停 / 继续 / 取消。任务每收一块检查一次 s_dl_action，
+ * 当前下载的 url / 路径 / 回调留在模块里，暂停后 resume 用同一份信息再起一个任务 */
+enum {
+    SVC_DL_RUN = 0,
+    SVC_DL_PAUSE,
+    SVC_DL_CANCEL,
+};
+
+static volatile svc_http_dl_state_t s_dl_state = SVC_HTTP_DL_IDLE;
+static volatile int s_dl_action = SVC_DL_RUN;
+static volatile size_t s_dl_received = 0;
+static volatile int s_dl_status = 0;            /* 最后一次响应的 HTTP 状态码 */
+
+static char s_dl_url[SVC_HTTP_URL_MAX];
+static char s_dl_path[SVC_HTTP_PATH_MAX];
+static svc_http_progress_cb_t s_dl_cb = NULL;
+static svc_http_name_cb_t s_dl_name_cb = NULL;
+static void *s_dl_user = NULL;
+
+static void svc_http_dl_task(void *arg);        /* 见下：下载任务本体 */
+
+/* 从响应里推文件名：优先 Content-Disposition 的 filename / filename*（RFC 5987），
+ * 其次是最终 URL（重定向之后）的最后一段；都没有就给空串 */
+static void dl_name_from_response(esp_http_client_handle_t c, const char *url,
+                                  char *out, size_t len)
+{
+    out[0] = '\0';
+
+    char *cd = NULL;
+    if (esp_http_client_get_header(c, "Content-Disposition", &cd) == ESP_OK && cd != NULL) {
+        const char *p = strstr(cd, "filename=");
+        if (p != NULL) {
+            p += 9;                                   /* strlen("filename=") */
+            if (strncmp(p, "UTF-8''", 7) == 0) p += 7;
+
+            const char quote = (*p == '"' || *p == '\'') ? *p : '\0';
+            if (quote != '\0') {
+                p++;
+                const char *e = strchr(p, quote);
+                if (e != NULL && e > p) {
+                    size_t n = (size_t)(e - p);
+                    if (n >= len) n = len - 1;
+                    memcpy(out, p, n);
+                    out[n] = '\0';
+                }
+            } else {
+                size_t n = 0;
+                while (p[n] != '\0' && p[n] != ';' && p[n] != ' ' && n + 1 < len) {
+                    out[n] = p[n];
+                    n++;
+                }
+                out[n] = '\0';
+            }
+        }
+    }
+
+    if (out[0] != '\0') return;
+
+    /* 退回 URL 的最后一段路径（先砍掉 query / fragment） */
+    const char *slash = NULL;
+    for (const char *q = url; *q != '\0' && *q != '?' && *q != '#'; q++) {
+        if (*q == '/') slash = q;
+    }
+    if (slash == NULL || slash[1] == '\0') return;
+
+    const char *name = slash + 1;
+    size_t n = 0;
+    while (name[n] != '\0' && name[n] != '?' && name[n] != '#' && n + 1 < len) {
+        out[n] = name[n];
+        n++;
+    }
+    out[n] = '\0';
+}
+
+static esp_err_t dl_task_start(const char *url, const char *path, size_t resume_from)
+{
+    svc_http_dl_t *dl = calloc(1, sizeof(*dl));
+    if (dl == NULL) return ESP_ERR_NO_MEM;
+
+    strlcpy(dl->url, url, sizeof(dl->url));
+    strlcpy(dl->path, path, sizeof(dl->path));
+    dl->cb = s_dl_cb;
+    dl->name_cb = s_dl_name_cb;
+    dl->user = s_dl_user;
+    dl->resume_from = resume_from;
+
+    s_dl_action = SVC_DL_RUN;
+    s_dl_received = resume_from;
+    s_dl_status = 0;
+    s_dl_state = SVC_HTTP_DL_RUNNING;
+
+    if (xTaskCreate(svc_http_dl_task, "svc.http", SVC_HTTP_DL_STACK, dl, 5, NULL) != pdPASS) {
+        s_dl_state = SVC_HTTP_DL_IDLE;
+        free(dl);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+/*
+ * 流式下载：按实际收到的字节写文件（不用 strlen），二进制安全。
+ * total 未知（esp_http_client_fetch_headers() 返回负值，常见于分块传输）时传 0。
+ */
+static void svc_http_dl_task(void *arg)
+{
+    svc_http_dl_t *dl = (svc_http_dl_t *)arg;
+
+    esp_err_t err = ESP_OK;
+    size_t received = 0;
+    size_t total = 0;
+    bool paused = false;
+    bool cancelled = false;
+    FILE *fp = NULL;
+    char *chunk = NULL;
+    esp_http_client_handle_t c = NULL;
+
+    esp_http_client_config_t cfg = {
+        .url = dl->url,
+        .timeout_ms = SVC_HTTP_ASYNC_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,   /* https 走内置证书 bundle */
+    };
+
+    c = esp_http_client_init(&cfg);
+    if (c == NULL) {
+        err = ESP_FAIL;
+    } else {
+        /* 空 User-Agent 会被一些站点直接拒 */
+        esp_http_client_set_header(c, "User-Agent", SVC_HTTP_UA);
+
+        if (dl->resume_from > 0) {
+            char range[48];
+            snprintf(range, sizeof(range), "bytes=%u-", (unsigned)dl->resume_from);
+            esp_http_client_set_header(c, "Range", range);
+        }
+
+        /* 自己跟重定向：低层的 open / read 这套 API 不会自动跟（只有 perform() 会），
+         * 分享链接 / 短链基本都是 302，不跟就直接当成错误了 */
+        int hop = 0;
+        int status = 0;
+        int64_t len = 0;
+
+        for (;;) {
+            if (esp_http_client_open(c, 0) != ESP_OK) {
+                err = ESP_FAIL;
+                break;
+            }
+
+            len = esp_http_client_fetch_headers(c);
+            status = esp_http_client_get_status_code(c);
+
+            if (status >= 300 && status < 400 && status != 304) {
+                char *loc = NULL;
+                (void)esp_http_client_get_header(c, "Location", &loc);   /* 趁响应头还在 */
+
+                if (++hop > SVC_HTTP_DL_MAX_REDIRECT || loc == NULL) {
+                    ESP_LOGW(TAG, "too many redirects (%d): %s", hop, dl->url);
+                    err = ESP_ERR_INVALID_RESPONSE;
+                    break;
+                }
+
+                ESP_LOGI(TAG, "download redirect %d -> %s", status, loc);
+                if (esp_http_client_set_redirection(c) != ESP_OK) {
+                    err = ESP_ERR_INVALID_RESPONSE;
+                    break;
+                }
+                strlcpy(dl->url, loc, sizeof(dl->url));   /* 定名字时按最终 URL 兜底 */
+                esp_http_client_close(c);
+                continue;
+            }
+
+            if (status < 200 || status >= 300) {
+                ESP_LOGW(TAG, "HTTP %d: %s", status, dl->url);
+                err = ESP_ERR_INVALID_RESPONSE;
+                break;
+            }
+
+            /* 最终的 2xx */
+            total = (len > 0) ? (size_t)len : 0;
+            if (dl->resume_from > 0 && status == 206) {
+                /* 服务端认这个 Range：长度是剩下那截，进度要把已下的算进去 */
+                received = dl->resume_from;
+                total = ((len > 0) ? (size_t)len : 0) + received;
+            } else if (dl->resume_from > 0) {
+                ESP_LOGW(TAG, "resume not supported (HTTP %d), restart", status);
+                dl->resume_from = 0;              /* 200 或别的：从头下 */
+            }
+            break;
+        }
+
+        s_dl_status = status;                     /* 失败提示里带上状态码（403 = 服务器拒绝） */
+    }
+
+    if (err == ESP_OK) {
+        /* 定名字：把响应里的文件名交给调用方，由它决定最终落盘路径。
+         * 续传时文件已经在写了，不再改名（否则续不上） */
+        if (dl->name_cb != NULL && dl->resume_from == 0) {
+            char name[128];
+            dl_name_from_response(c, dl->url, name, sizeof(name));
+            if (dl->name_cb(name, dl->path, sizeof(dl->path), dl->user) != ESP_OK) {
+                ESP_LOGW(TAG, "download name rejected: %s", name);
+                err = ESP_FAIL;
+            } else {
+                ESP_LOGI(TAG, "download name: %s -> %s", name[0] ? name : "(none)", dl->path);
+            }
+        }
+    }
+
+    if (err == ESP_OK) {
+        fp = fopen(dl->path, (dl->resume_from > 0) ? "ab" : "wb");
+        if (fp == NULL) {
+            ESP_LOGE(TAG, "open %s failed", dl->path);
+            err = ESP_FAIL;
+        }
+    }
+    if (err == ESP_OK) {
+        chunk = malloc(SVC_HTTP_DL_CHUNK);
+        if (chunk == NULL) err = ESP_ERR_NO_MEM;
+    }
+
+    while (err == ESP_OK) {
+        /* 暂停 / 停止：每收一块检查一次，收得很快，延迟一块可以接受 */
+        if (s_dl_action == SVC_DL_CANCEL) {
+            cancelled = true;
+            break;
+        }
+        if (s_dl_action == SVC_DL_PAUSE) {
+            paused = true;
+            break;
+        }
+
+        int rd = esp_http_client_read(c, chunk, SVC_HTTP_DL_CHUNK);
+        if (rd < 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        if (rd == 0) break;                       /* 数据读完 */
+
+        if (fwrite(chunk, 1, (size_t)rd, fp) != (size_t)rd) {
+            err = ESP_FAIL;
+            break;
+        }
+        received += (size_t)rd;
+        s_dl_received = received;
+        if (dl->cb != NULL) dl->cb(received, total, ESP_OK, false, dl->user);
+    }
+
+    free(chunk);
+    if (fp != NULL) fclose(fp);
+    if (c != NULL) {
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+    }
+
+    if (cancelled) {
+        remove(dl->path);                         /* 取消不留半截文件 */
+        ESP_LOGI(TAG, "download cancelled at %u bytes: %s", (unsigned)received, dl->url);
+    } else if (paused) {
+        ESP_LOGI(TAG, "download paused at %u bytes: %s", (unsigned)received, dl->url);
+    } else if (err != ESP_OK) {
+        ESP_LOGW(TAG, "download failed (%s): %s", esp_err_to_name(err), dl->url);
+        remove(dl->path);                         /* 失败不留下半截文件 */
+    } else {
+        ESP_LOGI(TAG, "downloaded %u bytes -> %s", (unsigned)received, dl->path);
+    }
+
+    s_dl_state = (paused && !cancelled && err == ESP_OK) ? SVC_HTTP_DL_PAUSED : SVC_HTTP_DL_IDLE;
+
+    if (dl->cb != NULL) dl->cb(received, total, err, true, dl->user);
+
+    free(dl);
+    vTaskDelete(NULL);
+}
+
+esp_err_t svc_http_download(const char *url, const char *path, svc_http_progress_cb_t cb,
+                            svc_http_name_cb_t name_cb, void *user)
+{
+    if (url == NULL || path == NULL) return ESP_ERR_INVALID_ARG;
+    if (strlen(url) >= SVC_HTTP_URL_MAX) return ESP_ERR_INVALID_SIZE;
+    if (strlen(path) >= SVC_HTTP_PATH_MAX) return ESP_ERR_INVALID_SIZE;
+
+    /* 留着给暂停 / 继续用：resume 时不再由调用方提供 url / path */
+    strlcpy(s_dl_url, url, sizeof(s_dl_url));
+    strlcpy(s_dl_path, path, sizeof(s_dl_path));
+    s_dl_cb = cb;
+    s_dl_name_cb = name_cb;
+    s_dl_user = user;
+
+    ESP_LOGI(TAG, "http download (async): %s -> %s", url, path);
+    return dl_task_start(s_dl_url, s_dl_path, 0);
+}
+
+svc_http_dl_state_t svc_http_download_state(void)
+{
+    return s_dl_state;
+}
+
+size_t svc_http_download_received(void)
+{
+    return s_dl_received;
+}
+
+int svc_http_download_status(void)
+{
+    return s_dl_status;
+}
+
+esp_err_t svc_http_download_pause(void)
+{
+    if (s_dl_state != SVC_HTTP_DL_RUNNING) return ESP_ERR_INVALID_STATE;
+
+    s_dl_action = SVC_DL_PAUSE;
+    return ESP_OK;
+}
+
+esp_err_t svc_http_download_resume(void)
+{
+    if (s_dl_state != SVC_HTTP_DL_PAUSED) return ESP_ERR_INVALID_STATE;
+
+    ESP_LOGI(TAG, "http download resume from %u bytes: %s",
+             (unsigned)s_dl_received, s_dl_url);
+    return dl_task_start(s_dl_url, s_dl_path, s_dl_received);
+}
+
+esp_err_t svc_http_download_cancel(void)
+{
+    if (s_dl_state == SVC_HTTP_DL_RUNNING) {
+        s_dl_action = SVC_DL_CANCEL;
+        return ESP_OK;
+    }
+    if (s_dl_state == SVC_HTTP_DL_PAUSED) {
+        /* 已经停下了：直接删半截文件回空闲 */
+        remove(s_dl_path);
+        s_dl_state = SVC_HTTP_DL_IDLE;
+        s_dl_received = 0;
+        ESP_LOGI(TAG, "download cancelled (paused): %s", s_dl_url);
+        return ESP_OK;
+    }
+    return ESP_ERR_INVALID_STATE;
+}
