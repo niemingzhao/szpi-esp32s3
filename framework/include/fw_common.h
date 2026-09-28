@@ -14,16 +14,20 @@
 #include "fw_asset.h"
 #include "fw_window.h"
 #include "fw_app_mgr.h"
+#include "fw_ui.h"
 #include "fw_statusbar.h"
+#include "fw_notification.h"
+#include "fw_control_center.h"
 #include "fw_input.h"
+#include "fw_boot_animation.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /** 固件版本与当前层（供日志与关于页使用） */
-#define SZPI_OS_VERSION   "v0.4"
-#define SZPI_OS_LAYER     "Framework Layer"
+#define SZPI_OS_VERSION   "v0.5"
+#define SZPI_OS_LAYER     "Services Layer"
 
 /**
  * @brief 初始化 Framework 层

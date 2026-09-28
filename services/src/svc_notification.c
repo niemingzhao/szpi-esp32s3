@@ -89,3 +89,19 @@ size_t svc_notification_get_count(void)
     }
     return n;
 }
+
+esp_err_t svc_notification_get(size_t index, svc_notification_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+
+    size_t n = 0;
+    for (int i = 0; i < SVC_NOTI_MAX; i++) {
+        if (!s_slots[i].used) continue;
+        if (n == index) {
+            *out = s_slots[i].noti;
+            return ESP_OK;
+        }
+        n++;
+    }
+    return ESP_ERR_NOT_FOUND;
+}

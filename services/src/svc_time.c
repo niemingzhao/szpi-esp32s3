@@ -40,6 +40,14 @@ static void time_sync_cb(struct timeval *tv)
     svc_event_bus_publish(SVC_EVENT_TIME_SYNCED, NULL, 0);
 }
 
+/* 网络就绪后立即补一次 NTP，避免只靠 6 小时轮询 */
+static void wifi_connected_cb(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+    svc_time_sync_ntp();
+}
+
 esp_err_t svc_time_sync_ntp(void)
 {
     /* 无网络接口时直接失败，避免在无 netif 的情况下初始化 SNTP */
@@ -137,6 +145,8 @@ esp_err_t svc_time_init(void)
     if (esp_timer_create(&targs, &s_minute_timer) == ESP_OK) {
         esp_timer_start_periodic(s_minute_timer, 60ULL * 1000 * 1000);
     }
+
+    svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, wifi_connected_cb, NULL);
 
     ESP_LOGI(TAG, "initialized (tz=%s)", tz);
     return ESP_OK;

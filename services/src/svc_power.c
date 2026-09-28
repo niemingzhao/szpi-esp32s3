@@ -29,7 +29,16 @@ static void touch_activity_cb(periph_touch_evt_t evt, const periph_touch_point_t
     if (evt == PERIPH_TOUCH_EVT_PRESS || evt == PERIPH_TOUCH_EVT_TAP) {
         svc_event_bus_publish(SVC_EVENT_TOUCH, (void *)pt,
                               pt ? sizeof(periph_touch_point_t) : 0);
+    } else if (evt == PERIPH_TOUCH_EVT_SWIPE_LEFT) {
+        svc_event_bus_publish(SVC_EVENT_GESTURE_SWIPE_LEFT, NULL, 0);
+    } else if (evt == PERIPH_TOUCH_EVT_SWIPE_RIGHT) {
+        svc_event_bus_publish(SVC_EVENT_GESTURE_SWIPE_RIGHT, NULL, 0);
+    } else if (evt == PERIPH_TOUCH_EVT_SWIPE_UP) {
+        svc_event_bus_publish(SVC_EVENT_GESTURE_SWIPE_UP, NULL, 0);
+    } else if (evt == PERIPH_TOUCH_EVT_SWIPE_DOWN) {
+        svc_event_bus_publish(SVC_EVENT_GESTURE_SWIPE_DOWN, NULL, 0);
     }
+
     if (s_sleeping) {
         svc_power_wake();
     }
@@ -73,6 +82,22 @@ esp_err_t svc_power_set_backlight_timeout(uint32_t seconds)
 uint32_t svc_power_get_backlight_timeout(void)
 {
     return s_timeout_s;
+}
+
+esp_err_t svc_power_set_brightness(uint8_t percent)
+{
+    if (percent > 100) percent = 100;
+
+    esp_err_t err = periph_lcd_set_brightness(percent);
+    if (err == ESP_OK) {
+        svc_event_bus_publish(SVC_EVENT_BRIGHTNESS_CHANGED, &percent, sizeof(percent));
+    }
+    return err;
+}
+
+uint8_t svc_power_get_brightness(void)
+{
+    return periph_lcd_get_brightness();
 }
 
 esp_err_t svc_power_wake(void)

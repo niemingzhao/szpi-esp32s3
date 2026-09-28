@@ -26,6 +26,12 @@ esp_err_t svc_power_set_backlight_timeout(uint32_t seconds);
 uint32_t svc_power_get_backlight_timeout(void);
 
 /**
+ * @brief 设置 / 获取屏幕亮度（0-100，自动持久化，发布 SVC_EVENT_BRIGHTNESS_CHANGED）
+ */
+esp_err_t svc_power_set_brightness(uint8_t percent);
+uint8_t svc_power_get_brightness(void);
+
+/**
  * @brief 唤醒 / 休眠（熄屏）
  */
 esp_err_t svc_power_wake(void);

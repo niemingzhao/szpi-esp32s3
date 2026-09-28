@@ -66,17 +66,8 @@ static void *home_on_create(void)
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s_root, fw_theme_color_bg_primary(), 0);
 
-    s_grid = lv_obj_create(s_root);
-    lv_obj_set_size(s_grid, 304, 172);
+    s_grid = fw_ui_grid(s_root, 3, 78, 82);
     lv_obj_align(s_grid, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_clear_flag(s_grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(s_grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_grid, 0, 0);
-    lv_obj_set_style_pad_all(s_grid, 6, 0);
-    lv_obj_set_style_pad_column(s_grid, 8, 0);
-    lv_obj_set_style_pad_row(s_grid, 10, 0);
-    lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(s_grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     build_grid();
 

@@ -37,13 +37,13 @@ szpi-esp32s3/
 ├── sdkconfig               # 自动生成，禁止手改
 ├── sdkconfig.defaults      # 策略文件，可改
 ├── main/
-│   ├── main.c              # app_main()，v0.4：Drivers + Peripherals + Services + Framework，启动 Home
+│   ├── main.c              # app_main()，v0.5：Drivers + Peripherals + Services + Framework，启动 Home
 │   ├── CMakeLists.txt
 │   └── idf_component.yml
 ├── drivers/                # 芯片级驱动（已完成）
 ├── peripherals/            # 外设抽象层（已完成）
-├── services/               # 业务服务层（基础服务已实现，audio / net 为骨架）
-├── framework/              # UI 框架层（scope A：theme / asset / window / app_mgr / statusbar / input）
+├── services/               # 业务服务层（net / audio 已实现，MP3 / 录音 / MQTT 等未实现）
+├── framework/              # UI 框架层（theme / asset / window / app_mgr / ui / statusbar / notification / control_center / input / boot_animation）
 ├── apps/                   # 应用层（scope A：app_home 桌面 + app_clock 示例）
 ├── managed_components/     # 组件管理器自动填充，按构建产物对待
 ├── docs/                   # 设计文档（需求 / 架构 / 详细设计）
@@ -55,8 +55,8 @@ szpi-esp32s3/
 
 **关键文件说明**：
 
-- `main/main.c` —— v0.4 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ `services_init()`（EventBus / Settings / Storage / Time / Audio / Net / Power / Notification）→ `fw_init()`（Framework 层）→ `app_register_all()` → `fw_app_mgr_launch("Home")` 显示桌面 → 挂载内置 SPIFFS。
-- `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`。
+- `main/main.c` —— v0.5 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ `services_init()`（EventBus / Settings / Storage / Time / Audio / Net / Power / Notification）→ `fw_init()`（Framework 层）→ `app_register_all()` → `fw_app_mgr_launch("Home")` 显示桌面 → 挂载内置 SPIFFS。
+- `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`、`espressif/es8311 ~1.0.0`。
 - `dependencies.lock` —— 精确锁定版本，**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
 - `partitions.csv` —— 自定义分区表，已在用（见文件头）。**不要切换到内置分区方案**，否则必须同步修改 factory/ota 布局和文档。
 
@@ -72,10 +72,10 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 
 | 目录 | 模块 | 说明 |
 |------|------|------|
-| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、BOOT 按键、LEDC、BSP | 已实现（`es8311`、`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
-| `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO 已实现；Audio 占位；Camera 未包含 |
-| `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | 骨架 + 基础服务：event_bus / settings / storage / time / power / notification 已实现；audio / net 为骨架 |
-| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_statusbar` | scope A 已实现；`fw_control_center`、`fw_notification` 规划中 |
+| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、BOOT 按键、LEDC、BSP | 已实现（`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
+| `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO/Audio 已实现（音频仅播放）；Camera 未包含 |
+| `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | event_bus / settings / storage / time / power / notification 已实现；net（Wi-Fi STA + HTTP）与 audio（WAV / tone 播放）已实现；MP3 / 录音 / SmartConfig / MQTT / WS / OTA 未实现 |
+| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（控制中心含 Wi-Fi / 亮度 / 音量 / 试听；长按 Wi-Fi 可清除凭据） |
 | `apps/` | `app_home`、`app_clock`（scope A） | 已实现这 2 个；`app_music`、`app_settings` 等其余 15 个规划中 |
 
 五层目录均已建立：`drivers/`、`peripherals/`、`services/`、`framework/`、`apps/`。新增模块时遵守 `docs/02-architecture/01-layer-design.md`：
@@ -215,12 +215,13 @@ idf.py size-files
                                  └─ periph_lcd_init() 内 lvgl_port_init() + lvgl_port_add_disp()
                                     periph_touch_init() 注册 LVGL input device
 4. services_init()            → EventBus, Settings, Storage, Time, Audio, Net, Power, Noti
-5. fw_init()                  → Theme, Asset, Window, AppMgr, StatusBar, Input（并创建全局浮层）
+5. fw_init()                  → Theme, Asset, Window, AppMgr, UI, StatusBar, NotiCenter, CtrlCenter, Input
 6. app_register_all()         → 注册所有内置 App
-7. fw_app_mgr_launch("Home")  → 显示桌面
-8. periph_storage_mount(内置) → 首屏之后挂载内置 SPIFFS（首次自动格式化）
+7. fw_boot_animation()        → Logo 缩放淡入 / 旋转 / 淡出（约 1.1 s）
+8. fw_app_mgr_launch("Home")  → 显示桌面
+9. periph_storage_mount(内置) → 首屏之后挂载内置 SPIFFS（首次自动格式化）
 
-（未实现：fw_boot_animation、fw_control_center、fw_notification）
+（未实现：控制中心的蓝牙 / 手电筒 / 锁屏磁贴、状态栏亮度图标、fw_notification_clear 单条撤销）
 ```
 
 时间预算（目标到首屏 < 2.5 s）见 `docs/03-design/04-data-flow.md`。
@@ -233,10 +234,13 @@ idf.py size-files
 drv_ft6336 → periph_touch 扫描任务（缓存 + 手势识别）→ LVGL indev read_cb 读缓存 → LVGL input device 派发 → App 处理
 
 ### 音频播放
-App 调用 `svc_audio_play(path)` → svc_audio 任务 → svc_storage 读文件 → helix MP3 解码 → I2S DMA → ES8311 → NS4150B 功放 → 喇叭
+App 调用 `svc_audio_play(&src)` → svc_audio 的 play_task → VFS 读文件（WAV / PCM 16-bit）→ `periph_audio_write()` → I2S0 DMA → ES8311 → NS4150B 功放 → 喇叭（PA_EN 由 PCA9557.BIT1 控制）
 
 ### 配置持久化
 App 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC_EVENT_*_CHANGED` → 订阅该事件的 App 自行刷新 UI（App 在 `on_start` 订阅、`on_pause` 退订）
+
+### 手势
+periph_touch 扫描任务（swipe 识别）→ svc_power 发布 `SVC_EVENT_GESTURE_SWIPE_*` → fw_input 路由 → 通知中心 / 控制中心 / 返回
 
 详细见 `docs/03-design/04-data-flow.md`。
 

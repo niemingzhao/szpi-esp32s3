@@ -77,14 +77,19 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 esp_err_t fw_control_center_init(void);
 esp_err_t fw_control_center_show(void);
 esp_err_t fw_control_center_hide(void);
+esp_err_t fw_control_center_toggle(void);
+bool fw_control_center_is_visible(void);
 ```
 
 ### 3.3 实现要点
 
-- 默认隐藏，底部上滑或特定手势打开
-- 滑块亮度调用 `svc_settings_set(BRIGHTNESS)`
-- 滑块音量调用 `svc_audio_set_volume()`
-- Wi-Fi / Bluetooth 开关调用 `svc_net_*`
+- 默认隐藏，底部上滑（swipe up）打开，点击遮罩关闭
+- 亮度滑块调用 `svc_power_set_brightness()`（内部持久化并发布 `SVC_EVENT_BRIGHTNESS_CHANGED`）
+- 音量滑块调用 `svc_audio_set_volume()`
+- Wi-Fi 开关调用 `svc_net_wifi_start()` / `svc_net_wifi_stop()`
+- “试听” 按钮调用 `svc_audio_play_tone_async(1000, 300)`，用于确认音频通路
+- 长按 Wi-Fi 磁贴弹出确认对话框，确认后 `svc_net_wifi_forget()` 清除已保存凭据并关闭 Wi-Fi
+- 蓝牙磁贴待 BLE 服务落地；手电筒 / 锁屏磁贴待对应服务
 
 ## 4. fw_notification（通知中心）
 
@@ -111,16 +116,19 @@ esp_err_t fw_control_center_hide(void);
 esp_err_t fw_notification_init(void);
 esp_err_t fw_notification_show(void);
 esp_err_t fw_notification_hide(void);
+esp_err_t fw_notification_toggle(void);
+bool fw_notification_is_visible(void);
 esp_err_t fw_notification_clear_all(void);
-esp_err_t fw_notification_clear(uint32_t id);
+esp_err_t fw_notification_clear(uint32_t id);   // 单条撤销内部走 svc_notification_dismiss()
 ```
 
 ### 4.3 实现要点
 
-- 订阅 `SVC_EVENT_NOTIFICATION_POSTED` 添加条目
-- 订阅 `SVC_EVENT_NOTIFICATION_DISMISSED` 删除条目
-- 点击条目调用原 notification 的 on_click 回调
-- 顶部状态栏的通知图标根据是否有未读显示
+- 订阅 `SVC_EVENT_NOTIFICATION_POSTED`：弹一条 Toast，并在可见时刷新列表
+- 订阅 `SVC_EVENT_NOTIFICATION_DISMISSED`：可见时刷新列表
+- 列表数据来自 `svc_notification_get()`（按顺序读取；标题 / 正文指向服务内部缓冲区）
+- 点击条目调用原 notification 的 on_click 回调，随后关闭通知中心
+- 顶部状态栏的通知图标根据是否有通知显示
 
 ## 5. 主题系统
 
@@ -184,8 +192,17 @@ lv_color_t fw_theme_color_accent(void);
 
 ```c
 lv_obj_t *fw_ui_progress_bar(lv_obj_t *parent, const char *title);
-lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg, fw_dialog_btn_t buttons);
+esp_err_t fw_ui_progress_set(lv_obj_t *bar, uint8_t percent);
+
+lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
+                       fw_dialog_btn_t buttons, fw_dialog_cb_t cb, void *user);
+esp_err_t fw_ui_dialog_close(lv_obj_t *dlg);
+
 lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms);
+
+lv_obj_t *fw_ui_list(lv_obj_t *parent, const char *title);
+lv_obj_t *fw_ui_list_add(lv_obj_t *list, const char *text, lv_event_cb_t cb, void *user);
+lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord_t item_h);
 ```
 
 ## 7. 字体与图标资源
@@ -315,6 +332,8 @@ lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
 | 顶部下滑 | 全局 → 打开通知中心 |
 | 底部上滑 | 全局 → 打开控制中心 |
 | 触摸屏幕中央 | 当前 App（经 LVGL input device） |
+
+当前 `periph_touch` 的手势只给出方向（不含起始坐标），因此先按方向全局路由：左滑 → `fw_app_mgr_back()`、下滑 → 通知中心、上滑 → 控制中心、右滑 → 关闭当前浮层。待手势携带起始坐标后再细化为边缘触发。
 
 ### 12.2 按键路由
 

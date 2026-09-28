@@ -185,6 +185,35 @@ esp_err_t drv_qmi8658_deinit(void);
 esp_err_t drv_qmi8658_read(float *out_acc_x, float *out_acc_y, float *out_acc_z,
                            float *out_gyr_x, float *out_gyr_y, float *out_gyr_z);
 
+// ============================================================================
+// drv_es8311 - 音频 DAC 驱动 (I2C0 @ 0x18, MCLK 由 I2S 提供)
+// ============================================================================
+
+/**
+ * @brief 初始化 ES8311（16-bit，MCLK = sample_rate * 256）
+ */
+esp_err_t drv_es8311_init(uint32_t sample_rate);
+
+/**
+ * @brief 运行期切换采样率（需同时重配 I2S 时钟）
+ */
+esp_err_t drv_es8311_set_sample_rate(uint32_t sample_rate);
+
+/**
+ * @brief 设置输出音量 0-100
+ */
+esp_err_t drv_es8311_set_volume(uint8_t percent);
+
+/**
+ * @brief 静音开关
+ */
+esp_err_t drv_es8311_set_mute(bool mute);
+
+/**
+ * @brief 反初始化
+ */
+esp_err_t drv_es8311_deinit(void);
+
 #ifdef __cplusplus
 }
 #endif

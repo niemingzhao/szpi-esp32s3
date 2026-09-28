@@ -1,11 +1,11 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * SZPI-OS v0.4 - Framework Layer Integration
+ * SZPI-OS v0.5 - Services Layer (net + audio)
  *
  * 启动序列：
  *   NVS → bsp_init()（Drivers）→ peripherals_init_all()（含 LVGL display/touch）
- *   → services_init() → fw_init() → app_register_all()
+ *   → services_init() → fw_init() → app_register_all() → fw_boot_animation()
  *   → fw_app_mgr_launch("Home") → 挂载内置 Flash（首次自动格式化）
  */
 
@@ -51,8 +51,9 @@ void app_main(void)
     // 5. Framework 层初始化（主题 / 资源 / 窗口 / App 管理 / 状态栏 / 输入）
     ESP_ERROR_CHECK(fw_init());
 
-    // 6. 注册所有内置 App 并启动桌面
+    // 6. 注册所有内置 App，播放启动动画，然后启动桌面
     app_register_all();
+    ESP_ERROR_CHECK(fw_boot_animation());
     ESP_ERROR_CHECK(fw_app_mgr_launch(FW_APP_HOME_NAME));
     ESP_LOGI(TAG, "Home launched");
 

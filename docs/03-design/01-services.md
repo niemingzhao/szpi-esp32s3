@@ -55,6 +55,12 @@ typedef enum {
     SVC_EVENT_TOUCH,
     SVC_EVENT_SHUTDOWN_REQUEST,
 
+    // 手势事件
+    SVC_EVENT_GESTURE_SWIPE_LEFT,
+    SVC_EVENT_GESTURE_SWIPE_RIGHT,
+    SVC_EVENT_GESTURE_SWIPE_UP,
+    SVC_EVENT_GESTURE_SWIPE_DOWN,
+
     // 音频事件
     SVC_EVENT_AUDIO_PLAYBACK_STARTED,
     SVC_EVENT_AUDIO_PLAYBACK_FINISHED,
@@ -282,6 +288,9 @@ esp_err_t svc_net_wifi_disconnect(void);
 /** 获取已保存的凭据并尝试自动连接 */
 esp_err_t svc_net_wifi_auto_connect(void);
 
+/** 清除已保存的凭据并断开 / 关闭 Wi-Fi */
+esp_err_t svc_net_wifi_forget(void);
+
 /** SmartConfig 配网 */
 esp_err_t svc_net_smartconfig_start(void);
 esp_err_t svc_net_smartconfig_stop(void);
@@ -316,8 +325,10 @@ esp_err_t svc_ota_check_and_update(const char *url);
 
 ### 5.3 实现要点
 
-- `net_event_task` (优先级 4, 核心 0) 处理 Wi-Fi 事件回调
+- Wi-Fi / IP 事件由 `esp_event` 默认事件循环任务处理，回调中发布 `SVC_EVENT_WIFI_*` 事件
 - 默认保存一份 Wi-Fi 凭据到 NVS，自动连接
+- 连接失败自动重试（最多 5 次），超限后停止并发布 `SVC_EVENT_WIFI_CONNECT_FAILED`
+- 开启 PMF capable（兼容 WPA3），`sae_pwe_h2e` 用 `WPA3_SAE_PWE_BOTH`
 - HTTP 客户端用 `esp_http_client`
 - MQTT 用 `mqtt`
 - WebSocket 用 `esp_websocket_client`
@@ -399,6 +410,7 @@ esp_err_t svc_notification_dismiss(uint32_t noti_id);
 esp_err_t svc_notification_clear_all(void);
 
 size_t svc_notification_get_count(void);
+esp_err_t svc_notification_get(size_t index, svc_notification_t *out);
 ```
 
 ### 7.3 实现要点
@@ -424,6 +436,9 @@ esp_err_t svc_power_init(void);
 esp_err_t svc_power_set_backlight_timeout(uint32_t seconds);  // 0 = 不超时
 uint32_t svc_power_get_backlight_timeout(void);
 
+esp_err_t svc_power_set_brightness(uint8_t percent);  // 0-100，发布 SVC_EVENT_BRIGHTNESS_CHANGED
+uint8_t svc_power_get_brightness(void);
+
 esp_err_t svc_power_wake(void);
 esp_err_t svc_power_sleep(void);
 bool svc_power_is_sleeping(void);
@@ -436,6 +451,7 @@ esp_err_t svc_power_request_shutdown(void);
 
 - `power_task` (优先级 2, 核心 0) 每秒检查
 - 触摸事件 (`SVC_EVENT_TOUCH` 通过事件总线) 重置超时
+- 同时把触摸 / 手势事件转成系统事件：`SVC_EVENT_TOUCH`、`SVC_EVENT_GESTURE_SWIPE_*`
 - 关机请求：发布 `SVC_EVENT_SHUTDOWN_REQUEST`，主循环收到后 `esp_restart()`
 - 本板无电池，`shutdown` 用 `deep sleep` 模拟
 
@@ -470,7 +486,7 @@ esp_err_t services_init(void) {
 
 ## 11. 跨服务依赖
 
-- `svc_audio` → `svc_storage`（读取音频文件）
+- `svc_audio` → `svc_storage`（路径 / 目录；文件内容经 VFS 直接读取）
 - `svc_audio` → `svc_notification`（通知点击后播放提示音）
 - `svc_net` → `svc_time`（SNTP 注册）
 - `svc_notification` → 所有服务（订阅 `*_POSTED` / `*_FINISHED` 事件）

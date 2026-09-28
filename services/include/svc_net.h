@@ -59,6 +59,9 @@ esp_err_t svc_net_wifi_disconnect(void);
 /** 获取已保存的凭据并尝试自动连接 */
 esp_err_t svc_net_wifi_auto_connect(void);
 
+/** 清除已保存的凭据并断开 / 关闭 Wi-Fi */
+esp_err_t svc_net_wifi_forget(void);
+
 /** SmartConfig 配网 */
 esp_err_t svc_net_smartconfig_start(void);
 esp_err_t svc_net_smartconfig_stop(void);

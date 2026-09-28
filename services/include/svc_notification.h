@@ -63,6 +63,11 @@ esp_err_t svc_notification_clear_all(void);
  */
 size_t svc_notification_get_count(void);
 
+/**
+ * @brief 按顺序读取第 index 条通知（title / message 指向服务内部缓冲区，调用方只读）
+ */
+esp_err_t svc_notification_get(size_t index, svc_notification_t *out);
+
 #ifdef __cplusplus
 }
 #endif
