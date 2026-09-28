@@ -1,3 +1,3 @@
 idf_component_register(SRCS "main.c"
-                    PRIV_REQUIRES spi_flash
-                    INCLUDE_DIRS "")
+                    REQUIRES nvs_flash esp_lcd esp_lvgl_port driver
+                    PRIV_REQUIRES spi_flash)
