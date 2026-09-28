@@ -46,6 +46,10 @@ typedef enum {
     SVC_EVENT_TIME_CHANGED,         // 每分钟
     SVC_EVENT_TIMEZONE_CHANGED,
 
+    // 主题 / 语言事件
+    SVC_EVENT_THEME_CHANGED,
+    SVC_EVENT_LANGUAGE_CHANGED,
+
     // 电源 / 输入事件
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,

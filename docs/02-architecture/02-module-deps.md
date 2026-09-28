@@ -82,7 +82,7 @@ fw_app_mgr ──→ fw_window ──→ fw_theme
                 ├─→ fw_statusbar ──→ svc_time
                 ├─→ fw_control_center ──→ svc_net, svc_power, svc_audio
                 ├─→ fw_notification ──→ svc_notification
-                └─→ fw_input ──← periph_touch（经 svc_event_bus）
+                └─→ fw_input ──← periph_button（BOOT 键，直接回调；见 01-layer-design 例外）
 
 fw_asset ──→ (不依赖其他 fw，可独立)
 fw_theme ──→ svc_settings

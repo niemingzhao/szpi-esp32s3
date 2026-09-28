@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_timer.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -23,6 +24,13 @@ static const char *TAG = "svc.time";
 
 static bool s_synced = false;
 static bool s_sntp_inited = false;
+static esp_timer_handle_t s_minute_timer = NULL;
+
+static void minute_timer_cb(void *arg)
+{
+    (void)arg;
+    svc_event_bus_publish(SVC_EVENT_TIME_CHANGED, NULL, 0);
+}
 
 static void time_sync_cb(struct timeval *tv)
 {
@@ -119,6 +127,16 @@ esp_err_t svc_time_init(void)
     tzset();
 
     xTaskCreate(ntp_sync_task, "ntp_sync_task", 3072, NULL, 2, NULL);
+
+    /* 每分钟发布 SVC_EVENT_TIME_CHANGED（供状态栏等处刷新） */
+    const esp_timer_create_args_t targs = {
+        .callback = minute_timer_cb,
+        .arg = NULL,
+        .name = "time_minute",
+    };
+    if (esp_timer_create(&targs, &s_minute_timer) == ESP_OK) {
+        esp_timer_start_periodic(s_minute_timer, 60ULL * 1000 * 1000);
+    }
 
     ESP_LOGI(TAG, "initialized (tz=%s)", tz);
     return ESP_OK;

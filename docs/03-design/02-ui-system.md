@@ -211,19 +211,25 @@ lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms);
 
 ```c
 // apps/app_home/app_home.c
-FW_APP_REGISTER(
+static void *home_on_create(void);
+static void home_on_destroy(void *ctx);
+
+const fw_app_desc_t app_home_desc = {
     .name = "Home",
-    .icon_64 = &icon_home_64,
-    .on_create = home_create,
-    .on_destroy = home_destroy,
-);
+    .icon_64 = NULL,          // Scope A 用内置符号；后续替换为 icon_home_64
+    .symbol = LV_SYMBOL_HOME,
+    .on_create = home_on_create,
+    .on_destroy = home_on_destroy,
+};
 ```
 
-桌面包含：
-- 顶部状态栏（fw_statusbar 嵌入）
+桌面内容区包含：
 - 天气小组件（可选）
 - 应用网格（4×2 分页，从 fw_app_mgr_list 获取，共 17 个 App）
-- 底部虚拟按键栏
+
+顶部状态栏（fw_statusbar）与底部虚拟按键栏（fw_input）是挂在 `lv_layer_top()` 上的全局浮层，由 `fw_init()` 创建，不随屏幕切换消失；桌面只填充分屏中部的内容区。
+
+桌面根屏同时是 fw_app_mgr 返回栈的栈底，其 `on_create` 返回根屏对象；`.symbol = LV_SYMBOL_HOME` 作为 Scope A 的内置符号图标（`icon_64` 为 NULL）。
 
 ## 9. 启动动画
 
@@ -323,7 +329,7 @@ lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
 应用切换时使用 200-300 ms 淡入淡出动画：
 
 ```c
-lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, NULL);
+lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_IN, 250, 0, false);
 ```
 
 动画期间禁用触摸输入（避免误操作）。

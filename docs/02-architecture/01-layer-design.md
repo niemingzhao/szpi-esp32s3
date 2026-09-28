@@ -30,6 +30,7 @@ Apps       ──→ Framework ──→ Services ──→ Peripherals ──�
 - `lvgl_port_lock/unlock` 可在 Peripherals / Services 中使用（LVGL display、触摸 input device、传感器更新）
 - `esp_timer` / `FreeRTOS` API 可在任何层使用
 - 第三方组件的纯函数可在 Services / Apps 中直接调用
+- `fw_input` 可直接注册 `periph_button` 回调获取 BOOT 键事件（按键事件尚未接入事件总线）
 
 ## 2. 静态库组织
 
@@ -192,7 +193,7 @@ esp_err_t fw_app_mgr_back_to_home(void);
 **约束**：
 - 调用 Services 层
 - 强依赖 LVGL
-- 不直接调用 Peripherals（必须经 Services）
+- 不直接调用 Peripherals（必须经 Services；按键输入的例外见 1.3）
 - FW 内部状态由 `fw_*` 模块自己管理
 
 ### 3.5 Apps 层

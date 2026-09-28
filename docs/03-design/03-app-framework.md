@@ -64,6 +64,7 @@ static void on_destroy(void *ctx) {
 FW_APP_REGISTER(
     .name = "Clock",
     .icon_64 = &icon_clock_64,
+    .symbol = LV_SYMBOL_BELL,   // icon_64 为 NULL 时使用内置符号
     .on_create = on_create,
     .on_start = on_start,
     .on_pause = on_pause,
@@ -194,7 +195,7 @@ static void *clock_on_create(void) {
     // 创建其他对象
     s_ctx.timer = lv_timer_create(clock_refresh, 500, NULL);
     lvgl_port_unlock();
-    return &s_ctx;
+    return s_ctx.root;   // on_create 返回根屏对象，作为各生命周期回调的 ctx
 }
 ```
 
@@ -207,12 +208,12 @@ static void *clock_on_create(void) {
 ### 5.1 手动注册（Phase 1）
 
 ```c
-// main/app_register.c
+// apps/src/app_register.c
 #include "fw_app_mgr.h"
 
-extern fw_app_desc_t app_home_desc;
-extern fw_app_desc_t app_clock_desc;
-extern fw_app_desc_t app_music_desc;
+extern const fw_app_desc_t app_home_desc;
+extern const fw_app_desc_t app_clock_desc;
+extern const fw_app_desc_t app_music_desc;
 // ...
 
 void app_register_all(void) {
