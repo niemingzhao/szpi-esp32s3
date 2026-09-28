@@ -6,25 +6,25 @@ UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封�
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              LVGL Display 320×240                         │
+│                 LVGL Display 320×240                      │
 ├──────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────┐ │
-│  │           Status Bar (24 px)         │ │  ← fw_statusbar                       │
-│  ├─────────────────────────────────────────────────┤ │
-│  │                                                 │ │
-│  │       App Window                                 │ │  ← 当前 App
-│  │                                                 │ │
-│  ├─────────────────────────────────────────────────┤ │
-│  │     虚拟按键栏 (BACK / HOME, 24-32 px)        │ │  ← fw_input
-│  └─────────────────────────────────────────────────┘ │
+│ [返回][主页]   10:30   [Wi-Fi][音乐][通知][控制]           │  ← fw_statusbar (28 px)
+├──────────────────────────────────────────────────────────┤
 │                                                          │
-│  Overlay Layers:                                         │
-│   • Control Center (下拉覆盖)                          │  ← fw_control_center
-│   • Notification Center (下拉覆盖)                    │  ← fw_notification
-│   • Power Menu (长按 BOOT)                            │
-│   • Toast (短提示)                                     │
+│                     App Window                           │  ← 当前 App
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│  Overlay（挂在 lv_layer_top()，覆盖状态栏以下整区）:        │
+│   • 控制中心 fw_control_center（Wi-Fi / 亮度 / 音量 / 试听）│
+│   • 通知中心 fw_notification                              │
+│   • Toast / 对话框 fw_ui（对话框为模态，覆盖全屏）          │
+│   • 电源菜单（长按 BOOT）                                 │
 └──────────────────────────────────────────────────────────┘
 ```
+
+- 状态栏是唯一常驻浮层，同时承担全局导航（返回 / 主页 / 通知中心 / 控制中心）
+- 没有底部虚拟按键栏，也不使用滑动手势
+- 开机时状态栏随全局浮层一起隐藏，先全屏展示官方 Logo 与提示音
 
 ## 2. fw_statusbar（状态栏）
 
@@ -53,6 +53,11 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 - 订阅 `SVC_EVENT_WIFI_*` 更新 Wi-Fi 图标
 - 订阅 `SVC_EVENT_AUDIO_*` 更新播放图标
 - 订阅 `SVC_EVENT_BRIGHTNESS_CHANGED` 更新亮度
+- 左侧返回 / 主页按钮分别调用 `fw_app_mgr_back()` / `fw_app_mgr_back_to_home()`；`fw_app_mgr_back()` 会先询问当前 App 的 `on_back()`（用于 App 内返回上一级页面）
+- 右侧通知 / 控制中心按钮打开对应浮层（两者互斥，再点一次关闭）
+- 状态栏高度由 `FW_STATUSBAR_H` 定义；App 内容区与浮层都以此为顶部偏移
+- 状态栏按钮用 `lv_obj_set_ext_click_area()` 向四周扩大触摸区域（视觉尺寸不变），弥补面板触摸与显示位置的微小偏差
+- 蓝牙图标待 BLE 服务落地后显示
 
 ## 3. fw_control_center（控制中心）
 
@@ -83,12 +88,12 @@ bool fw_control_center_is_visible(void);
 
 ### 3.3 实现要点
 
-- 默认隐藏，底部上滑（swipe up）打开，点击遮罩关闭
+- 默认隐藏，由状态栏的“控制中心”按钮打开；占满状态栏以下的显示区，右上角 × 关闭；内容用纵向 flex 排布，超出高度可滚动
 - 亮度滑块调用 `svc_power_set_brightness()`（内部持久化并发布 `SVC_EVENT_BRIGHTNESS_CHANGED`）
 - 音量滑块调用 `svc_audio_set_volume()`
-- Wi-Fi 开关调用 `svc_net_wifi_start()` / `svc_net_wifi_stop()`
+- Wi-Fi 磁贴：已连接时点击 = 断开（`svc_net_wifi_stop()`）；未连接时点击 = 用已保存凭据免密重连（`svc_net_wifi_auto_connect()`，没保存过则只打开 Wi-Fi 开关）
 - “试听” 按钮调用 `svc_audio_play_tone_async(1000, 300)`，用于确认音频通路
-- 长按 Wi-Fi 磁贴弹出确认对话框，确认后 `svc_net_wifi_forget()` 清除已保存凭据并关闭 Wi-Fi
+- 长按 Wi-Fi 磁贴弹出"忘记已保存的网络？"确认框，确认后 `svc_net_wifi_forget()` 忘记网络并关闭 Wi-Fi（与 Settings 里的"忘记网络"措辞一致）
 - 蓝牙磁贴待 BLE 服务落地；手电筒 / 锁屏磁贴待对应服务
 
 ## 4. fw_notification（通知中心）
@@ -124,6 +129,7 @@ esp_err_t fw_notification_clear(uint32_t id);   // 单条撤销内部走 svc_not
 
 ### 4.3 实现要点
 
+- 由状态栏的“通知”按钮打开；占满状态栏以下的显示区，右上角 × 关闭；列表区可滚动
 - 订阅 `SVC_EVENT_NOTIFICATION_POSTED`：弹一条 Toast，并在可见时刷新列表
 - 订阅 `SVC_EVENT_NOTIFICATION_DISMISSED`：可见时刷新列表
 - 列表数据来自 `svc_notification_get()`（按顺序读取；标题 / 正文指向服务内部缓冲区）
@@ -132,26 +138,36 @@ esp_err_t fw_notification_clear(uint32_t id);   // 单条撤销内部走 svc_not
 
 ## 5. 主题系统
 
-### 5.1 颜色定义（默认深色主题）
+### 5.1 调色板
 
-```c
-#define COLOR_BG_PRIMARY       lv_color_hex(0x121212)
-#define COLOR_BG_SECONDARY     lv_color_hex(0x1E1E1E)
-#define COLOR_BG_CARD          lv_color_hex(0x2A2A2A)
-#define COLOR_BG_HOVER         lv_color_hex(0x3A3A3A)
+深色 / 浅色两套色板，取色统一走 `fw_theme_color_*()`，不要在界面代码里写死颜色。
 
-#define COLOR_TEXT_PRIMARY     lv_color_hex(0xFFFFFF)
-#define COLOR_TEXT_SECONDARY   lv_color_hex(0xBBBBBB)
-#define COLOR_TEXT_DISABLED    lv_color_hex(0x666666)
+| 令牌 | 深色 | 浅色 | 用途 |
+|------|------|------|------|
+| `bg_primary` | `0x121212` | `0xE7ECF2` | 页面底色 |
+| `bg_secondary` | `0x1E1E1E` | `0xFFFFFF` | 状态栏 / 浮层 |
+| `bg_card` | `0x2A2A2A` | `0xFFFFFF` | 卡片 / 按钮 |
+| `text_primary` | `0xFFFFFF` | `0x161A1F` | 正文 |
+| `text_secondary` | `0xBBBBBB` | `0x4C5561` | 次要文字 |
+| `text_disabled` | `0x666666` | `0x9AA0A6` | 禁用态 |
+| `accent` | `0x4F9EFF` | `0x1D6FD0` | 主色（图标 / 滑块指示条 / 主按钮） |
+| `accent2` | `0x9C27B0` | `0x7B1FA2` | 次色 |
+| `success` | `0x4CAF50` | `0x2E7D32` | 成功 |
+| `warning` | `0xFFC107` | `0xE07B00` | 警告 |
+| `error` | `0xF44336` | `0xC62828` | 错误 |
+| `divider` | `0x2A2A2A` | `0xD5DCE4` | 分隔线 |
+| `border` | `0x333333` | `0xBFCAD6` | 卡片 / 状态栏描边 |
 
-#define COLOR_ACCENT           lv_color_hex(0x4F9EFF)
-#define COLOR_ACCENT2          lv_color_hex(0x9C27B0)
-#define COLOR_SUCCESS          lv_color_hex(0x4CAF50)
-#define COLOR_WARNING          lv_color_hex(0xFFC107)
-#define COLOR_ERROR            lv_color_hex(0xF44336)
+浅色主题下"白卡片 + 浅灰页面"的层次全靠描边，所以卡片、按钮、浮层都要显式设
+`border_width = 1` + `border_color = fw_theme_color_border()`；状态栏也用同色画一条底部 1 px 线。
 
-#define COLOR_DIVIDER          lv_color_hex(0x2A2A2A)
-#define COLOR_BORDER           lv_color_hex(0x333333)
+界面里的控件必须显式设色，不要依赖 LVGL 自带主题：`lv_theme_default` 会给 `lv_btn`
+加"主色底 + 白字"，我们把按钮底色改成 `bg_card` 之后，标签若不设 `text_color`
+就会变成白字白底——深色主题下看不出来，浅色主题下直接消失。
+改完界面跑一次自检：
+
+```powershell
+python tools/check_ui_colors.py
 ```
 
 ### 5.2 字体
@@ -175,6 +191,8 @@ fw_theme_t fw_theme_current(void);
 lv_color_t fw_theme_color_bg_primary(void);
 lv_color_t fw_theme_color_accent(void);
 ```
+
+`fw_theme_apply()` 会同步切换 LVGL 自带主题的明暗，并发布 `SVC_EVENT_THEME_CHANGED`；框架收到后重建状态栏、两个浮层以及所有 App 的界面，因此**立即全局生效**（App 内部页面会回到初始页）。
 
 ## 6. 通用 UI 组件
 
@@ -209,9 +227,10 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
 
 ### 7.1 字体来源
 
-- 英文：LVGL 内置 Montserrat 20/24/32
-- 中文：阿里巴巴普惠体
-- 中文字体子集化：通过 LVGL font converter 生成
+- 英文 / 数字：LVGL 内置 Montserrat 14（正文）、20（中号）、24（大号）
+- 中文：Noto Sans SC（OFL 授权）栅格化的 **14 px（正文）** 与 **16 px（标题）** 子集，位于 `framework/assets/font_cn14.c`、`font_cn16.c`
+- 子集只包含界面用字，由 `tools/gen_cn_font.py` 生成；子集里没有的 FontAwesome 符号回退到 Montserrat 14
+- 所有字体统一经 `fw_asset_font_cn()` / `fw_asset_font_cn_large()` / `fw_asset_font_14()` / `fw_asset_font_20()` / `fw_asset_font_24()` 获取
 
 ### 7.2 图标来源
 
@@ -240,11 +259,11 @@ const fw_app_desc_t app_home_desc = {
 };
 ```
 
-桌面内容区包含：
+桌面内容区：
+- 一屏 4×2 = 8 个应用图标（`lv_tileview`，超出可左右滑动翻页），图标顺序即 App 注册顺序（Clock 在左上角第一个）
 - 天气小组件（可选）
-- 应用网格（4×2 分页，从 fw_app_mgr_list 获取，共 17 个 App）
 
-顶部状态栏（fw_statusbar）与底部虚拟按键栏（fw_input）是挂在 `lv_layer_top()` 上的全局浮层，由 `fw_init()` 创建，不随屏幕切换消失；桌面只填充分屏中部的内容区。
+状态栏（fw_statusbar）是挂在 `lv_layer_top()` 上的全局浮层，由 `fw_init()` 创建，不随屏幕切换消失；桌面内容区位于状态栏以下。
 
 桌面根屏同时是 fw_app_mgr 返回栈的栈底，其 `on_create` 返回根屏对象；`.symbol = LV_SYMBOL_HOME` 作为 Scope A 的内置符号图标（`icon_64` 为 NULL）。
 
@@ -268,9 +287,8 @@ const fw_app_desc_t app_home_desc = {
 | 单击 | 触发对应按钮 / 图标 |
 | 双击 | 桌面 / 关闭对话框 |
 | 长按 | 弹出菜单 / 删除 |
-| 滑动（左 / 右） | 切换 App / 关闭对话框 |
-| 顶部下滑 | 打开通知中心 |
-| 底部上滑 | 打开控制中心 |
+| 滑动 | 不使用（导航由状态栏按钮完成） |
+| 状态栏按钮 | 返回、主页、通知中心、控制中心 |
 
 ## 11. LVGL 集成要点
 
@@ -326,14 +344,12 @@ lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
 
 ### 12.1 手势识别
 
-| 手势 | 默认路由 |
+| 操作 | 默认路由 |
 |------|----------|
-| 右边缘左滑 | 全局 → fw_app_mgr_back() |
-| 顶部下滑 | 全局 → 打开通知中心 |
-| 底部上滑 | 全局 → 打开控制中心 |
 | 触摸屏幕中央 | 当前 App（经 LVGL input device） |
+| 状态栏按钮 | 返回、主页、通知中心、控制中心 |
 
-当前 `periph_touch` 的手势只给出方向（不含起始坐标），因此先按方向全局路由：左滑 → `fw_app_mgr_back()`、下滑 → 通知中心、上滑 → 控制中心、右滑 → 关闭当前浮层。待手势携带起始坐标后再细化为边缘触发。
+不使用滑动手势：导航与浮层开关全部由状态栏上的按钮完成（`fw_statusbar`），避免手势与应用内滑动冲突。`periph_touch` 仍会识别 swipe 并发布 `SVC_EVENT_GESTURE_*`，当前没有订阅者。
 
 ### 12.2 按键路由
 

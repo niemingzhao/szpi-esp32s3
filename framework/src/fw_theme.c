@@ -6,6 +6,7 @@
 
 #include "fw_common.h"
 #include "svc_common.h"
+#include "esp_lvgl_port.h"
 #include "esp_log.h"
 
 static const char *TAG = "fw.theme";
@@ -46,28 +47,46 @@ static const fw_palette_t s_dark = {
 };
 
 static const fw_palette_t s_light = {
-    .bg_primary     = 0xFFFFFF,
-    .bg_secondary   = 0xF2F2F2,
-    .bg_card        = 0xFFFFFF,
-    .text_primary   = 0x1A1A1A,
-    .text_secondary = 0x555555,
-    .text_disabled  = 0xAAAAAA,
-    .accent         = 0x1976D2,
+    .bg_primary     = 0xE7ECF2,   /* 页面底色：浅灰，衬托白卡片 */
+    .bg_secondary   = 0xFFFFFF,   /* 状态栏 / 浮层：纯白 */
+    .bg_card        = 0xFFFFFF,   /* 卡片 */
+    .text_primary   = 0x161A1F,
+    .text_secondary = 0x4C5561,
+    .text_disabled  = 0x9AA0A6,
+    .accent         = 0x1D6FD0,
     .accent2        = 0x7B1FA2,
-    .success        = 0x388E3C,
-    .warning        = 0xFFA000,
-    .error          = 0xD32F2F,
-    .divider        = 0xE0E0E0,
-    .border         = 0xCCCCCC,
+    .success        = 0x2E7D32,
+    .warning        = 0xE07B00,
+    .error          = 0xC62828,
+    .divider        = 0xD5DCE4,
+    .border         = 0xBFCAD6,
 };
 
 static fw_theme_t s_theme = FW_THEME_DARK;
 static const fw_palette_t *s_pal = &s_dark;
 
+/* 同步 LVGL 自带主题的明暗（影响我们没显式设色的控件，如输入框） */
+static void apply_lvgl_theme(void)
+{
+    lv_disp_t *d = lv_disp_get_default();
+    if (d == NULL) return;
+
+    lvgl_port_lock(0);
+    lv_theme_t *th = lv_theme_default_init(d,
+                                          lv_color_hex(s_pal->accent),
+                                          lv_color_hex(s_pal->accent2),
+                                          (s_theme == FW_THEME_DARK),
+                                          fw_asset_font_14());
+    lv_disp_set_theme(d, th);
+    lvgl_port_unlock();
+}
+
 esp_err_t fw_theme_apply(fw_theme_t theme)
 {
     s_theme = (theme == FW_THEME_LIGHT) ? FW_THEME_LIGHT : FW_THEME_DARK;
     s_pal = (s_theme == FW_THEME_LIGHT) ? &s_light : &s_dark;
+
+    apply_lvgl_theme();
 
     svc_settings_set_u8(FW_THEME_NS, FW_THEME_KEY, (uint8_t)s_theme);
     svc_event_bus_publish(SVC_EVENT_THEME_CHANGED, &s_theme, sizeof(s_theme));
@@ -83,6 +102,8 @@ esp_err_t fw_theme_init(void)
 
     s_theme = (t == FW_THEME_LIGHT) ? FW_THEME_LIGHT : FW_THEME_DARK;
     s_pal = (s_theme == FW_THEME_LIGHT) ? &s_light : &s_dark;
+
+    apply_lvgl_theme();
 
     ESP_LOGI(TAG, "initialized (%s)", (s_theme == FW_THEME_LIGHT) ? "light" : "dark");
     return ESP_OK;

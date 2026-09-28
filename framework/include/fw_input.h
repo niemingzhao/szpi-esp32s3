@@ -3,12 +3,8 @@
  *
  * Framework - Input
  *
- * 全局输入路由：
- *   BOOT 键单击   → fw_app_mgr_back()
- *   BOOT 键双击   → fw_app_mgr_back_to_home()
- *   BOOT 键长按   → 电源菜单（关机 / 重启 / 取消）
- *   底部虚拟按键栏 BACK / HOME
- *   滑动手势      → 下滑通知中心 / 上滑控制中心 / 左滑返回 / 右滑关闭浮层
+ * 全局输入路由：BOOT 键（单击返回 / 双击桌面 / 长按电源菜单）与滑动手势（左滑返回、右滑关闭浮层）。
+ * 通知中心 / 控制中心 / 返回 / 主页的按钮位于状态栏（fw_statusbar）。
  */
 
 #pragma once
@@ -23,13 +19,6 @@ extern "C" {
  * @brief 初始化输入路由（注册 BOOT 键回调 + 订阅手势事件）
  */
 esp_err_t fw_input_init(void);
-
-/**
- * @brief 创建全局底部虚拟按键栏（BACK / HOME）
- *
- * 挂在 lv_layer_top() 上，内部自行加 LVGL 锁。
- */
-esp_err_t fw_input_create_navbar(void);
 
 #ifdef __cplusplus
 }

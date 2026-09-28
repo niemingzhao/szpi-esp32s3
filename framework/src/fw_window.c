@@ -21,10 +21,17 @@ esp_err_t fw_window_init(void)
 esp_err_t fw_window_switch_to(lv_obj_t *scr, lv_scr_load_anim_t anim, uint32_t time_ms)
 {
     if (scr == NULL) return ESP_ERR_INVALID_ARG;
-    if (scr == s_active) return ESP_OK;
+    /* s_active 可能是已被删除的屏（地址会被堆复用），必须再和 LVGL 实际的活动屏核对 */
+    if (scr == s_active && scr == lv_scr_act()) return ESP_OK;
 
     lv_scr_load_anim(scr, anim, time_ms, 0, false);
     s_active = scr;
+    return ESP_OK;
+}
+
+esp_err_t fw_window_sync_active(void)
+{
+    s_active = lv_scr_act();
     return ESP_OK;
 }
 

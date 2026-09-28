@@ -99,7 +99,11 @@ esp_err_t periph_lcd_init(void)
         lvgl_port_unlock();
     }
 
-    /* 3. 背光：加载 NVS 中保存的亮度并应用 */
+    /* 3. 点亮背光前先整屏清黑：ST7789 GRAM 掉电/复位后不会自动清空，
+     *    否则背光一亮会先显示上一次运行残留在面板里的画面 */
+    periph_lcd_fill(0x0000);
+
+    /* 4. 背光：加载 NVS 中保存的亮度并应用 */
     load_brightness();
     drv_ledc_set_brightness(s_brightness);
 

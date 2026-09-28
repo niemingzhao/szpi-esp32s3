@@ -225,7 +225,7 @@ static esp_err_t play_tone(uint16_t freq, uint32_t ms)
         if (n > AUDIO_CHUNK / 4) n = AUDIO_CHUNK / 4;
 
         for (uint32_t i = 0; i < n; i++) {
-            int16_t v = (int16_t)(sinf(2.0f * AUDIO_PI * (float)freq * (float)(done + i) / (float)sr) * 6000.0f);
+            int16_t v = (int16_t)(sinf(2.0f * AUDIO_PI * (float)freq * (float)(done + i) / (float)sr) * 10000.0f);
             pcm[2 * i] = v;
             pcm[2 * i + 1] = v;
         }

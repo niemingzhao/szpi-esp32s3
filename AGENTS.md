@@ -43,8 +43,8 @@ szpi-esp32s3/
 ├── drivers/                # 芯片级驱动（已完成）
 ├── peripherals/            # 外设抽象层（已完成）
 ├── services/               # 业务服务层（net / audio 已实现，MP3 / 录音 / MQTT 等未实现）
-├── framework/              # UI 框架层（theme / asset / window / app_mgr / ui / statusbar / notification / control_center / input / boot_animation）
-├── apps/                   # 应用层（scope A：app_home 桌面 + app_clock 示例）
+├── framework/              # UI 框架层（10 个模块 + assets/ 字体子集与开机 Logo）
+├── apps/                   # 应用层（app_home / app_clock / app_settings）
 ├── managed_components/     # 组件管理器自动填充，按构建产物对待
 ├── docs/                   # 设计文档（需求 / 架构 / 详细设计）
 │   ├── 01-requirements/    # 原始需求、硬件规格、PRD
@@ -75,8 +75,8 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 | `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、BOOT 按键、LEDC、BSP | 已实现（`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
 | `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO/Audio 已实现（音频仅播放）；Camera 未包含 |
 | `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | event_bus / settings / storage / time / power / notification 已实现；net（Wi-Fi STA + HTTP）与 audio（WAV / tone 播放）已实现；MP3 / 录音 / SmartConfig / MQTT / WS / OTA 未实现 |
-| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（控制中心含 Wi-Fi / 亮度 / 音量 / 试听；长按 Wi-Fi 可清除凭据） |
-| `apps/` | `app_home`、`app_clock`（scope A） | 已实现这 2 个；`app_music`、`app_settings` 等其余 15 个规划中 |
+| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（状态栏集成返回 / 主页 / 通知 / 控制中心按钮；中文由 assets 的 Noto 子集 14/16 px 渲染；开机画面用官方 Logo + 提示音） |
+| `apps/` | `app_home`、`app_clock`、`app_settings` | 已实现这 3 个（Settings：Wi-Fi 扫描 / 免密重连 / 忘记、亮度、背光超时、主题（立即生效）、关于）；`app_music`、`app_file` 等其余 14 个规划中 |
 
 五层目录均已建立：`drivers/`、`peripherals/`、`services/`、`framework/`、`apps/`。新增模块时遵守 `docs/02-architecture/01-layer-design.md`：
 
@@ -140,6 +140,63 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 ### 4.8 FATFS 三项必须同时保留
 
 `storage` 分区上 `CONFIG_FATFS_LFN_HEAP=y`、`CONFIG_FATFS_CODEPAGE_936=y`、`CONFIG_FATFS_API_ENCODING_UTF_8=y` 三项必须一起保留，否则 TF 卡上的非 ASCII 长文件名会乱码。
+
+### 4.9 中文界面文案与字体子集
+
+中文由 `framework/assets/font_cn14.c` / `font_cn16.c` 渲染（Noto Sans SC 栅格化，OFL 授权），是**只含界面用字的子集**，编译后分别约 21 KB / 27 KB。新增中文文案若出现方框，说明用到了字表外的字 —— 把该字加进 `tools/gen_cn_font.py` 的 `CN_CHARS` 并重新生成：
+
+```powershell
+python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --sizes 14,16
+```
+
+字体统一从 `fw_asset_font_cn()`（14 px 正文）/ `fw_asset_font_cn_large()`（16 px 标题）/ `fw_asset_font_14|20|24()`（拉丁）获取，不要直接引用字体变量。开机画面用 `framework/assets/image_lckfb_logo.c`（立创官方 120×120 资源，已裁掉非 16-bit-swap 分支）。
+
+改完界面文案后先跑一次自检，确认没有用到字表外的字（否则会显示方框）：
+
+```powershell
+python tools/check_cn_text.py
+```
+
+动态数据（如 Wi-Fi 名称、文件名）里的汉字不在字表内是正常的 —— UI 字体回退到 `font_cn_extra`（`--cs gb2312` 生成，GB2312 一级 3755 常用字，14 px / 2bpp），两条生成命令：
+
+```powershell
+python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --cs gb2312 --sizes 14 --bpp 2
+python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --sizes 14,16
+```
+
+回退链：`font_cn14`/`font_cn16` → `font_cn_extra` → `lv_font_montserrat_14`（FontAwesome 符号）。
+
+### 4.10 点亮背光前必须先清屏
+
+ST7789 的 GRAM 掉电 / 复位后不会自动清空。若先开背光再等 LVGL 首帧，会短暂显示**上一次运行残留在面板里的画面**（表现为开机"先闪一下主页"）。`periph_lcd_init()` 在设置背光前先 `periph_lcd_fill(0x0000)` 整屏清黑。
+
+### 4.11 开机提示音要先打成功放
+
+`periph_audio_set_mute(false)` 之后功放 / codec 有几百毫秒的启动斜坡。若紧接着播放很短的提示音，开头会被这段斜坡吃掉（听起来"没有声音"）。`fw_boot_animation()` 先解除静音、等 150 ms，再播放 300 ms 的提示音。
+
+### 4.12 点击请用 LV_EVENT_SHORT_CLICKED
+
+LVGL 的 `indev_proc_release` 会**无条件**发送 `LV_EVENT_CLICKED`，只有 `LV_EVENT_SHORT_CLICKED` 才判断"无长按、无滑动"。所以界面上的"点击"处理要注册 `LV_EVENT_SHORT_CLICKED`，否则长按后松手也会触发点击（例如长按 Wi-Fi 磁贴会同时弹出清除凭据对话框并切换开关）。滑块 / 复选框仍用 `LV_EVENT_VALUE_CHANGED`。
+
+### 4.13 换主题要重建 UI
+
+控件配色是写死在控件上的，改调色板不会影响已创建的对象。`fw_theme_apply()` 切换 LVGL 自带主题的明暗并发布 `SVC_EVENT_THEME_CHANGED` 后，由 `fw_init` 的处理器重建状态栏、两个浮层与所有 App 的界面（App 内部页面回到初始页），从而立即生效。新增需要跟随主题的 UI 模块时，实现一个 `fw_*_rebuild()` 并在该处理器里登记。
+
+重建必须注意以下四点，否则会崩：
+
+- **不能在 App 事件回调里同步重建**：先把重建 `lv_async_call()` 丢到 LVGL 任务里执行，否则会删掉"正在处理事件的控件"。
+- **禁止删除活动屏**：`lv_obj_del()` 删除当前活动屏时会把 `lv_disp_t.act_scr` 置为 NULL（`lv_obj_tree.c`），随后任何 `lv_scr_load*()` 都会在 `lv_obj_set_pos(lv_scr_act(), ...)` 处空指针崩溃。重建前先 `lv_scr_load()` 一块临时空屏，最后确认它已不是活动屏再删除。
+- **`fw_window` 的 `s_active` 是裸指针**：旧屏被删除后它悬空，而新屏很可能复用同一地址，导致 `fw_window_switch_to()` 误判"已在目标屏"而跳过切换。切换前先 `fw_window_sync_active()`，且切换判重时同时核对 `lv_scr_act()`。
+- 重建前后台 App 要保持原样：对当前前台 App 依次 `on_destroy` → `on_create` → `on_pause` → `on_start`（`on_pause` 用来退订，避免 `on_start` 重复订阅），最后再切到它的新根屏。
+
+### 4.14 控件必须显式设色，不要依赖 LVGL 自带主题
+
+`lv_theme_default` 会给 `lv_btn` 加 `bg_color_primary`（主色底 + **白字**）。我们把按钮底色改成 `bg_card` 之后，按钮里的标签如果自己不设 `text_color`，就会用主题给的白字：深色主题下白字落在深色卡片上看不出来，浅色主题下就是白字白底、**直接消失**（曾发生在通知中心的关闭按钮 × 和 `fw_ui_dialog()` 的按钮上）。所以：
+
+- `lv_btn_create()` 之后，按钮内的标签一律显式 `lv_obj_set_style_text_color()`。
+- 滑块（`LV_PART_MAIN` 轨道 / `LV_PART_INDICATOR` 指示条 / `LV_PART_KNOB` 圆点）、输入框、卡片、浮层同理。
+- 改完界面跑 `python tools/check_ui_colors.py` 自检（扫描"创建标签但附近没有设色"的地方）。
+- 浅色主题下白卡片与浅灰页面靠描边区分，卡片 / 按钮 / 浮层都要 `border_width = 1` + `border_color = fw_theme_color_border()`。
 
 ---
 
@@ -217,7 +274,7 @@ idf.py size-files
 4. services_init()            → EventBus, Settings, Storage, Time, Audio, Net, Power, Noti
 5. fw_init()                  → Theme, Asset, Window, AppMgr, UI, StatusBar, NotiCenter, CtrlCenter, Input
 6. app_register_all()         → 注册所有内置 App
-7. fw_boot_animation()        → Logo 缩放淡入 / 旋转 / 淡出（约 1.1 s）
+7. fw_boot_animation()        → 全屏官方 Logo 静态展示 + 单声开机提示音（约 1.7 s）
 8. fw_app_mgr_launch("Home")  → 显示桌面
 9. periph_storage_mount(内置) → 首屏之后挂载内置 SPIFFS（首次自动格式化）
 

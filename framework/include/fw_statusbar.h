@@ -16,12 +16,19 @@
 extern "C" {
 #endif
 
+/** 状态栏高度（App 内容区与浮层都以此为顶部偏移） */
+#define FW_STATUSBAR_H   28
+
 /**
  * @brief 创建状态栏并订阅系统事件
  *
+ * 状态栏为全局浮层，内含：返回 / 主页 / 通知中心 / 控制中心 按钮、时间、状态图标。
  * 内部自行加 LVGL 锁。
  */
 esp_err_t fw_statusbar_init(void);
+
+/** 换主题后重建全部控件（保留订阅与定时器） */
+esp_err_t fw_statusbar_rebuild(void);
 
 /**
  * @brief 设置时间文本（如 "10:30"）

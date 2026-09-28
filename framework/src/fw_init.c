@@ -5,10 +5,36 @@
  */
 
 #include "fw_common.h"
+#include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 
 static const char *TAG = "fw.init";
+
+static void theme_rebuild_async(void *user)
+{
+    (void)user;
+
+    fw_statusbar_rebuild();
+    fw_notification_rebuild();
+    fw_control_center_rebuild();
+    fw_app_mgr_rebuild_all();
+
+    ESP_LOGI(TAG, "UI rebuilt for theme change");
+}
+
+/* 换主题：重建全局浮层与所有 App 的界面。
+ * 用 lv_async_call 推迟到 LVGL 任务里执行 —— 主题是在 App 的按钮回调里切换的，
+ * 同步重建会把"正在处理事件的控件"删掉。 */
+static void evt_theme(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+
+    lvgl_port_lock(0);
+    lv_async_call(theme_rebuild_async, NULL);
+    lvgl_port_unlock();
+}
 
 esp_err_t fw_init(void)
 {
@@ -29,7 +55,8 @@ esp_err_t fw_init(void)
     ESP_ERROR_CHECK(fw_notification_init());
     ESP_ERROR_CHECK(fw_control_center_init());
     ESP_ERROR_CHECK(fw_input_init());
-    ESP_ERROR_CHECK(fw_input_create_navbar());
+
+    svc_event_bus_subscribe(SVC_EVENT_THEME_CHANGED, evt_theme, NULL);
 
     ESP_LOGI(TAG, "=== framework init done ===");
     return ESP_OK;

@@ -22,6 +22,9 @@ esp_err_t fw_notification_toggle(void);
 esp_err_t fw_notification_clear_all(void);
 bool fw_notification_is_visible(void);
 
+/** 换主题后重建全部控件 */
+esp_err_t fw_notification_rebuild(void);
+
 #ifdef __cplusplus
 }
 #endif

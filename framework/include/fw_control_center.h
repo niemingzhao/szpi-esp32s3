@@ -21,6 +21,9 @@ esp_err_t fw_control_center_hide(void);
 esp_err_t fw_control_center_toggle(void);
 bool fw_control_center_is_visible(void);
 
+/** 换主题后重建全部控件 */
+esp_err_t fw_control_center_rebuild(void);
+
 #ifdef __cplusplus
 }
 #endif

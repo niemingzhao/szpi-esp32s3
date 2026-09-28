@@ -3,7 +3,8 @@
  *
  * Framework - Status Bar 实现
  *
- * 挂在 lv_layer_top() 上，不随 App 屏幕切换消失。
+ * 全局状态栏（挂 lv_layer_top()），不随 App 屏幕切换消失。它同时承担全局导航：
+ *   [返回] [主页]        时间        [Wi-Fi] [音乐] [通知中心] [控制中心]
  * 事件回调运行在 svc_event_bus 的 dispatcher 任务，访问 LVGL 前必须加锁。
  */
 
@@ -14,15 +15,14 @@
 
 static const char *TAG = "fw.statusbar";
 
-#define FW_STATUS_H   24
-
 static lv_obj_t *s_bar = NULL;
 static lv_obj_t *s_time = NULL;
 static lv_obj_t *s_wifi = NULL;
 static lv_obj_t *s_music = NULL;
-static lv_obj_t *s_bt = NULL;
-static lv_obj_t *s_noti = NULL;
+static lv_obj_t *s_noti_icon = NULL;
 static lv_timer_t *s_timer = NULL;
+static bool s_wifi_on = false;
+static bool s_music_on = false;
 
 static void refresh_time(void)
 {
@@ -45,6 +45,77 @@ static void timer_cb(lv_timer_t *t)
     refresh_time();
 }
 
+/* ---------------------------------- 导航 ---------------------------------- */
+
+static void nav_back_cb(lv_event_t *e)
+{
+    (void)e;
+    fw_app_mgr_back();
+}
+
+static void nav_home_cb(lv_event_t *e)
+{
+    (void)e;
+    fw_app_mgr_back_to_home();
+}
+
+static void nav_noti_cb(lv_event_t *e)
+{
+    (void)e;
+
+    if (fw_notification_is_visible()) {
+        fw_notification_hide();
+    } else {
+        fw_control_center_hide();   /* 同一时刻只保留一个浮层 */
+        fw_notification_show();
+    }
+}
+
+static void nav_ctrl_cb(lv_event_t *e)
+{
+    (void)e;
+
+    if (fw_control_center_is_visible()) {
+        fw_control_center_hide();
+    } else {
+        fw_notification_hide();
+        fw_control_center_show();
+    }
+}
+
+static lv_obj_t *make_bar_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_t cb,
+                              lv_align_t align, lv_coord_t x, lv_coord_t w)
+{
+    lv_obj_t *btn = lv_btn_create(parent);
+    lv_obj_set_size(btn, w, FW_STATUSBAR_H - 8);
+    lv_obj_align(btn, align, x, 0);
+    lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
+    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    lv_obj_set_ext_click_area(btn, 8);      /* 视觉不变，触摸区域向四周放大 8 px */
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, NULL);
+
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, symbol);
+    lv_obj_set_style_text_font(label, fw_asset_font_14(), 0);
+    lv_obj_set_style_text_color(label, fw_theme_color_text_primary(), 0);
+    lv_obj_center(label);
+    return btn;
+}
+
+static lv_obj_t *make_bar_icon(lv_obj_t *parent, const char *symbol, lv_align_t align, lv_coord_t x)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, symbol);
+    lv_obj_set_style_text_font(label, fw_asset_font_14(), 0);
+    lv_obj_set_style_text_color(label, fw_theme_color_text_disabled(), 0);
+    lv_obj_align(label, align, x, 0);
+    return label;
+}
+
+/* ------------------------------- 状态 setter ------------------------------- */
+
 esp_err_t fw_statusbar_set_time(const char *time)
 {
     lvgl_port_lock(0);
@@ -58,6 +129,7 @@ esp_err_t fw_statusbar_set_time(const char *time)
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected)
 {
     (void)rssi;
+    s_wifi_on = connected;
     lvgl_port_lock(0);
     if (s_wifi != NULL) {
         lv_obj_set_style_text_color(s_wifi,
@@ -71,6 +143,7 @@ esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected)
 
 esp_err_t fw_statusbar_set_music_playing(bool on)
 {
+    s_music_on = on;
     lvgl_port_lock(0);
     if (s_music != NULL) {
         if (on) lv_obj_clear_flag(s_music, LV_OBJ_FLAG_HIDDEN);
@@ -82,14 +155,11 @@ esp_err_t fw_statusbar_set_music_playing(bool on)
 
 esp_err_t fw_statusbar_set_bluetooth(bool on)
 {
-    lvgl_port_lock(0);
-    if (s_bt != NULL) {
-        if (on) lv_obj_clear_flag(s_bt, LV_OBJ_FLAG_HIDDEN);
-        else    lv_obj_add_flag(s_bt, LV_OBJ_FLAG_HIDDEN);
-    }
-    lvgl_port_unlock();
+    (void)on;   /* BLE 服务尚未接入，暂不显示蓝牙图标 */
     return ESP_OK;
 }
+
+/* -------------------------------- 事件回调 -------------------------------- */
 
 static void evt_time(const svc_event_t *evt, void *user)
 {
@@ -112,65 +182,71 @@ static void evt_audio(const svc_event_t *evt, void *user)
     fw_statusbar_set_music_playing(evt->id == SVC_EVENT_AUDIO_PLAYBACK_STARTED);
 }
 
+/* 有通知时把铃铛点亮（常驻入口，不隐藏） */
 static void evt_noti(const svc_event_t *evt, void *user)
 {
     (void)evt;
     (void)user;
 
     lvgl_port_lock(0);
-    if (s_noti != NULL) {
-        if (svc_notification_get_count() > 0) lv_obj_clear_flag(s_noti, LV_OBJ_FLAG_HIDDEN);
-        else                                  lv_obj_add_flag(s_noti, LV_OBJ_FLAG_HIDDEN);
+    if (s_noti_icon != NULL) {
+        lv_obj_set_style_text_color(s_noti_icon,
+                                    svc_notification_get_count() > 0 ? fw_theme_color_warning()
+                                                                     : fw_theme_color_text_primary(),
+                                    0);
     }
     lvgl_port_unlock();
+}
+
+/* ---------------------------------- 初始化 ---------------------------------- */
+
+static void statusbar_build(void)
+{
+    s_bar = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_bar, lv_disp_get_hor_res(NULL), FW_STATUSBAR_H);
+    lv_obj_set_pos(s_bar, 0, 0);
+    lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_bar, fw_theme_color_bg_secondary(), 0);
+    lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, 0);
+    /* 底部 1 px 线：浅色主题下把状态栏和页面分开 */
+    lv_obj_set_style_border_width(s_bar, 1, 0);
+    lv_obj_set_style_border_side(s_bar, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(s_bar, fw_theme_color_border(), 0);
+    lv_obj_set_style_radius(s_bar, 0, 0);
+    lv_obj_set_style_pad_all(s_bar, 0, 0);
+    lv_obj_set_style_text_font(s_bar, fw_asset_font_14(), 0);
+
+    /* 左：返回 / 主页 */
+    make_bar_btn(s_bar, LV_SYMBOL_LEFT, nav_back_cb, LV_ALIGN_LEFT_MID, 8, 32);
+    make_bar_btn(s_bar, LV_SYMBOL_HOME, nav_home_cb, LV_ALIGN_LEFT_MID, 48, 32);
+
+    /* 中：时间 */
+    s_time = lv_label_create(s_bar);
+    lv_label_set_text(s_time, "--:--");
+    lv_obj_set_style_text_color(s_time, fw_theme_color_text_primary(), 0);
+    lv_obj_align(s_time, LV_ALIGN_CENTER, 0, 0);
+
+    /* 右：状态图标 + 通知中心 / 控制中心 */
+    make_bar_btn(s_bar, LV_SYMBOL_SETTINGS, nav_ctrl_cb, LV_ALIGN_RIGHT_MID, -8, 32);
+    lv_obj_t *noti_btn = make_bar_btn(s_bar, LV_SYMBOL_BELL, nav_noti_cb, LV_ALIGN_RIGHT_MID, -48, 32);
+    s_noti_icon = lv_obj_get_child(noti_btn, 0);
+
+    s_wifi = make_bar_icon(s_bar, LV_SYMBOL_WIFI, LV_ALIGN_RIGHT_MID, -88);
+    s_music = make_bar_icon(s_bar, LV_SYMBOL_AUDIO, LV_ALIGN_RIGHT_MID, -108);
+    lv_obj_set_style_text_color(s_music, fw_theme_color_accent(), 0);
+
+    /* 重建时把当前状态重新套上 */
+    fw_statusbar_set_wifi(0, s_wifi_on);
+    fw_statusbar_set_music_playing(s_music_on);
+    evt_noti(NULL, NULL);
+    refresh_time();
 }
 
 esp_err_t fw_statusbar_init(void)
 {
     lvgl_port_lock(0);
-
-    s_bar = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_bar, lv_disp_get_hor_res(NULL), FW_STATUS_H);
-    lv_obj_set_pos(s_bar, 0, 0);
-    lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(s_bar, fw_theme_color_bg_secondary(), 0);
-    lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_bar, 0, 0);
-    lv_obj_set_style_radius(s_bar, 0, 0);
-    lv_obj_set_style_pad_all(s_bar, 0, 0);
-    lv_obj_set_style_text_font(s_bar, fw_asset_font_20(), 0);
-
-    s_time = lv_label_create(s_bar);
-    lv_label_set_text(s_time, "--:--");
-    lv_obj_set_style_text_color(s_time, fw_theme_color_text_primary(), 0);
-    lv_obj_align(s_time, LV_ALIGN_LEFT_MID, 6, 0);
-
-    s_wifi = lv_label_create(s_bar);
-    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(s_wifi, fw_theme_color_text_disabled(), 0);
-    lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -6, 0);
-
-    s_music = lv_label_create(s_bar);
-    lv_label_set_text(s_music, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_color(s_music, fw_theme_color_accent(), 0);
-    lv_obj_align(s_music, LV_ALIGN_RIGHT_MID, -28, 0);
-    lv_obj_add_flag(s_music, LV_OBJ_FLAG_HIDDEN);
-
-    s_bt = lv_label_create(s_bar);
-    lv_label_set_text(s_bt, LV_SYMBOL_BLUETOOTH);
-    lv_obj_set_style_text_color(s_bt, fw_theme_color_text_primary(), 0);
-    lv_obj_align(s_bt, LV_ALIGN_RIGHT_MID, -50, 0);
-    lv_obj_add_flag(s_bt, LV_OBJ_FLAG_HIDDEN);
-
-    s_noti = lv_label_create(s_bar);
-    lv_label_set_text(s_noti, LV_SYMBOL_BELL);
-    lv_obj_set_style_text_color(s_noti, fw_theme_color_warning(), 0);
-    lv_obj_align(s_noti, LV_ALIGN_RIGHT_MID, -72, 0);
-    lv_obj_add_flag(s_noti, LV_OBJ_FLAG_HIDDEN);
-
+    statusbar_build();
     s_timer = lv_timer_create(timer_cb, 1000, NULL);
-    refresh_time();
-
     lvgl_port_unlock();
 
     svc_event_bus_subscribe(SVC_EVENT_TIME_SYNCED, evt_time, NULL);
@@ -183,6 +259,26 @@ esp_err_t fw_statusbar_init(void)
     svc_event_bus_subscribe(SVC_EVENT_NOTIFICATION_POSTED, evt_noti, NULL);
     svc_event_bus_subscribe(SVC_EVENT_NOTIFICATION_DISMISSED, evt_noti, NULL);
 
-    ESP_LOGI(TAG, "initialized");
+    ESP_LOGI(TAG, "initialized (%d px)", FW_STATUSBAR_H);
+    return ESP_OK;
+}
+
+/* 换主题时重建控件（订阅与定时器保持不变） */
+esp_err_t fw_statusbar_rebuild(void)
+{
+    lvgl_port_lock(0);
+
+    if (s_bar != NULL) {
+        lv_obj_del(s_bar);
+        s_bar = NULL;
+        s_time = NULL;
+        s_wifi = NULL;
+        s_music = NULL;
+        s_noti_icon = NULL;
+    }
+
+    statusbar_build();
+
+    lvgl_port_unlock();
     return ESP_OK;
 }

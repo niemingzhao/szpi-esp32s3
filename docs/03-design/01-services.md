@@ -291,6 +291,9 @@ esp_err_t svc_net_wifi_auto_connect(void);
 /** 清除已保存的凭据并断开 / 关闭 Wi-Fi */
 esp_err_t svc_net_wifi_forget(void);
 
+/** 读取已保存的 SSID（无则返回 ESP_ERR_NOT_FOUND） */
+esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len);
+
 /** SmartConfig 配网 */
 esp_err_t svc_net_smartconfig_start(void);
 esp_err_t svc_net_smartconfig_stop(void);

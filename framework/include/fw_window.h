@@ -34,6 +34,14 @@ esp_err_t fw_window_switch_to(lv_obj_t *scr, lv_scr_load_anim_t anim, uint32_t t
  */
 lv_obj_t *fw_window_active(void);
 
+/**
+ * @brief 用 LVGL 的实际活动屏重新对齐内部记录
+ *
+ * 重建 UI（如切换主题）时，旧的屏会被删除，内部记录的指针会悬空，
+ * 且可能被新屏复用同一地址。重建过程中调用本函数可避免误判。
+ */
+esp_err_t fw_window_sync_active(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -23,7 +23,12 @@ extern "C" {
 esp_err_t fw_asset_init(void);
 
 /**
- * @brief 字体：小号（20 px），不可用时回退 LVGL 默认字体
+ * @brief 字体：小号（14 px，拉丁 / 数字），不可用时回退 LVGL 默认字体
+ */
+const lv_font_t *fw_asset_font_14(void);
+
+/**
+ * @brief 字体：中号（20 px），不可用时回退 LVGL 默认字体
  */
 const lv_font_t *fw_asset_font_20(void);
 
@@ -36,6 +41,16 @@ const lv_font_t *fw_asset_font_24(void);
  * @brief 字体：大号（32 px），未启用时回退 24 px
  */
 const lv_font_t *fw_asset_font_32(void);
+
+/**
+ * @brief 字体：中文（14 px，正文 / 标签；同样覆盖 ASCII）
+ */
+const lv_font_t *fw_asset_font_cn(void);
+
+/**
+ * @brief 字体：中文大号（16 px，标题 / 强调）
+ */
+const lv_font_t *fw_asset_font_cn_large(void);
 
 /**
  * @brief 按 App 名取内置符号图标（无匹配时返回通用文件图标）

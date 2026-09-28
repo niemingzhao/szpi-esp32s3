@@ -31,6 +31,7 @@ static const char *TAG = "svc.net";
 static esp_netif_t *s_netif = NULL;
 static bool s_wifi_inited = false;
 static bool s_started = false;
+static wifi_mode_t s_mode = WIFI_MODE_NULL;
 static volatile bool s_connecting = false;
 static volatile bool s_connect_pending = false;
 static volatile bool s_user_disconnect = false;
@@ -182,13 +183,19 @@ esp_err_t svc_net_wifi_start(svc_net_mode_t mode)
     if (mode == SVC_NET_MODE_AP) m = WIFI_MODE_AP;
     else if (mode == SVC_NET_MODE_STA_AP) m = WIFI_MODE_APSTA;
 
+    /* 已经在同一模式下运行就不重复 start（避免刷日志与多余的 IDF 调用） */
+    if (s_started && s_mode == m) return ESP_OK;
+
     s_user_disconnect = false;
 
     esp_err_t err = esp_wifi_set_mode(m);
     if (err != ESP_OK) return err;
 
     err = esp_wifi_start();
-    if (err == ESP_OK) s_started = true;
+    if (err == ESP_OK) {
+        s_started = true;
+        s_mode = m;
+    }
 
     ESP_LOGI(TAG, "wifi start (mode=%d): %s", mode, esp_err_to_name(err));
     return err;
@@ -200,6 +207,7 @@ esp_err_t svc_net_wifi_stop(void)
 
     s_user_disconnect = true;
     s_started = false;
+    s_mode = WIFI_MODE_NULL;
     s_connecting = false;
     s_status.wifi_connected = false;
 
@@ -258,6 +266,12 @@ esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds)
     if (creds == NULL || creds->ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
 
+    /* 已经连在这个网络上就不要再连一次（否则 IDF 会先断开再重连并告警） */
+    if (s_status.wifi_connected && strcmp(s_status.wifi_ssid, creds->ssid) == 0) {
+        ESP_LOGI(TAG, "already connected to %s", creds->ssid);
+        return ESP_OK;
+    }
+
     wifi_config_t wc;
     memset(&wc, 0, sizeof(wc));
     strlcpy((char *)wc.sta.ssid, creds->ssid, sizeof(wc.sta.ssid));
@@ -282,8 +296,11 @@ esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds)
     ESP_LOGI(TAG, "connecting to %s", creds->ssid);
 
     err = esp_wifi_connect();
-    if (err == ESP_ERR_WIFI_NOT_STARTED) {
-        return ESP_OK;           /* 待 WIFI_EVENT_STA_START 里补发连接 */
+    if (err == ESP_ERR_WIFI_NOT_STARTED || err == ESP_ERR_WIFI_CONN) {
+        /* 还没启动完成，或驱动正在收尾：保持 pending，
+         * 交给 WIFI_EVENT_STA_START / 断线回调里补连 */
+        ESP_LOGI(TAG, "connect deferred (%s)", esp_err_to_name(err));
+        return ESP_OK;
     }
     if (err == ESP_OK) {
         s_connect_pending = false;
@@ -347,6 +364,15 @@ esp_err_t svc_net_wifi_forget(void)
 
     ESP_LOGI(TAG, "saved credentials cleared");
     return ESP_OK;
+}
+
+esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len)
+{
+    if (buf == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+
+    svc_settings_get_str(NET_NS, "ssid", buf, len, "");
+    return (buf[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t svc_net_smartconfig_start(void)

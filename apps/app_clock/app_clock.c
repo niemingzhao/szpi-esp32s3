@@ -12,6 +12,8 @@
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
+#include <stdio.h>
+#include <time.h>
 
 static const char *TAG = "app.clock";
 
@@ -31,10 +33,18 @@ static void refresh(void)
     }
 
     int64_t now = svc_time_now();
+    time_t t = (time_t)now;
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+
+    static const char *wd[] = { "日", "一", "二", "三", "四", "五", "六" };
+    int w = (tmv.tm_wday >= 0 && tmv.tm_wday < 7) ? tmv.tm_wday : 0;
+
     char tb[8];
-    char db[24];
+    char db[64];
     svc_time_format(now, "%H:%M", tb, sizeof(tb));
-    svc_time_format(now, "%Y-%m-%d", db, sizeof(db));
+    snprintf(db, sizeof(db), "%04d-%02d-%02d 星期%s",
+             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday, wd[w]);
 
     lv_label_set_text(s_time, tb);
     lv_label_set_text(s_date, db);
@@ -57,12 +67,12 @@ static void *clock_on_create(void)
     s_time = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_time, fw_asset_font_32(), 0);
     lv_obj_set_style_text_color(s_time, fw_theme_color_text_primary(), 0);
-    lv_obj_align(s_time, LV_ALIGN_CENTER, 0, -12);
+    lv_obj_align(s_time, LV_ALIGN_CENTER, 0, FW_STATUSBAR_H / 2 - 16);
 
     s_date = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_date, fw_asset_font_20(), 0);
+    lv_obj_set_style_text_font(s_date, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(s_date, fw_theme_color_text_secondary(), 0);
-    lv_obj_align(s_date, LV_ALIGN_CENTER, 0, 28);
+    lv_obj_align(s_date, LV_ALIGN_CENTER, 0, FW_STATUSBAR_H / 2 + 22);
 
     s_timer = lv_timer_create(timer_cb, 1000, NULL);
     refresh();

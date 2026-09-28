@@ -11,6 +11,9 @@
 #include "esp_log.h"
 #include <string.h>
 
+LV_FONT_DECLARE(font_cn14);
+LV_FONT_DECLARE(font_cn16);
+
 static const char *TAG = "fw.asset";
 
 typedef struct {
@@ -37,6 +40,15 @@ static const fw_asset_icon_t s_icons[] = {
     { "About",      LV_SYMBOL_FILE },
     { "Factory",    LV_SYMBOL_SETTINGS },
 };
+
+const lv_font_t *fw_asset_font_14(void)
+{
+#if LV_FONT_MONTSERRAT_14
+    return &lv_font_montserrat_14;
+#else
+    return LV_FONT_DEFAULT;
+#endif
+}
 
 const lv_font_t *fw_asset_font_20(void)
 {
@@ -65,6 +77,16 @@ const lv_font_t *fw_asset_font_32(void)
 #endif
 }
 
+const lv_font_t *fw_asset_font_cn(void)
+{
+    return &font_cn14;
+}
+
+const lv_font_t *fw_asset_font_cn_large(void)
+{
+    return &font_cn16;
+}
+
 const char *fw_asset_symbol_for(const char *app_name)
 {
     if (app_name == NULL) return LV_SYMBOL_FILE;
@@ -77,6 +99,6 @@ const char *fw_asset_symbol_for(const char *app_name)
 
 esp_err_t fw_asset_init(void)
 {
-    ESP_LOGI(TAG, "initialized (built-in fonts + symbols)");
+    ESP_LOGI(TAG, "initialized (Montserrat + CN 14/16 px + GB2312 fallback + symbol icons)");
     return ESP_OK;
 }

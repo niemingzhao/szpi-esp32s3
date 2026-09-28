@@ -22,7 +22,7 @@ extern "C" {
  * @brief App 描述符
  *
  * on_create 返回该 App 的根屏对象（lv_obj_create(NULL) 创建的 screen），
- * 它同时作为 on_start / on_pause / on_resume / on_destroy 的 ctx 传入。
+ * 它同时作为 on_start / on_pause / on_resume / on_destroy / on_back 的 ctx 传入。
  */
 typedef struct {
     const char *name;
@@ -33,6 +33,13 @@ typedef struct {
     void (*on_pause)(void *ctx);
     void (*on_resume)(void *ctx);
     void (*on_destroy)(void *ctx);
+    /**
+     * @brief 处理"返回"（状态栏返回键 / BOOT 单击）
+     *
+     * 返回 true 表示已在 App 内处理（例如回到上一级页面），fw_app_mgr 不再返回上一级；
+     * 返回 false 或未实现则退出到上一级（通常是桌面）。可为 NULL。
+     */
+    bool (*on_back)(void *ctx);
 } fw_app_desc_t;
 
 /**
@@ -93,6 +100,11 @@ size_t fw_app_mgr_list(const fw_app_desc_t **out, size_t max);
  * @brief 已注册 App 数量
  */
 size_t fw_app_mgr_count(void);
+
+/**
+ * @brief 换主题后重建所有已创建 App 的界面，并保持当前前台 App
+ */
+esp_err_t fw_app_mgr_rebuild_all(void);
 
 #ifdef __cplusplus
 }

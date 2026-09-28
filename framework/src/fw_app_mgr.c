@@ -165,6 +165,13 @@ esp_err_t fw_app_mgr_back(void)
         return ESP_OK;
     }
 
+    /* 先让当前 App 自己处理（如返回上一级页面） */
+    fw_app_slot_t *cur = &s_slots[s_stack[s_top]];
+    if (cur->desc->on_back != NULL && cur->desc->on_back(cur->ctx)) {
+        lvgl_port_unlock();
+        return ESP_OK;
+    }
+
     slot_pause(s_stack[s_top]);
     s_top--;
 
@@ -247,6 +254,58 @@ const char *fw_app_mgr_current(void)
 {
     if (s_top < 0) return NULL;
     return s_slots[s_stack[s_top]].desc->name;
+}
+
+/* 换主题：重建所有已创建 App 的界面，并保持当前前台 App 与它的生命周期 */
+esp_err_t fw_app_mgr_rebuild_all(void)
+{
+    lvgl_port_lock(0);
+
+    bool was_created[FW_APP_MAX];
+    for (size_t i = 0; i < FW_APP_MAX; i++) was_created[i] = s_slots[i].created;
+
+    /* 先把前台切到一块临时空屏：否则删除"正在显示的屏"会让 LVGL 的 act_scr 变成 NULL */
+    lv_obj_t *dummy = lv_obj_create(NULL);
+    lv_obj_clear_flag(dummy, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(dummy, fw_theme_color_bg_primary(), 0);
+    lv_scr_load(dummy);
+    fw_window_sync_active();   /* 同步内部记录，避免旧屏地址被新屏复用时误判 */
+
+    for (size_t i = 0; i < s_count; i++) {
+        fw_app_slot_t *a = &s_slots[i];
+        if (!was_created[i]) continue;
+
+        if (a->desc->on_destroy != NULL) a->desc->on_destroy(a->ctx);
+        a->created = false;
+        a->ctx = NULL;
+        a->root = NULL;
+    }
+
+    for (size_t i = 0; i < s_count; i++) {
+        fw_app_slot_t *a = &s_slots[i];
+        if (!was_created[i]) continue;
+
+        a->root = (lv_obj_t *)a->desc->on_create();
+        a->created = (a->root != NULL);
+        a->ctx = a->root;
+    }
+
+    /* 重建当前前台 App：先 on_pause 退订，避免 on_start 里重复订阅 */
+    if (s_top >= 0) {
+        fw_app_slot_t *a = &s_slots[s_stack[s_top]];
+        if (a->created) {
+            if (a->desc->on_pause != NULL) a->desc->on_pause(a->ctx);
+            if (a->desc->on_start != NULL) a->desc->on_start(a->ctx);
+            if (a->root != NULL) fw_window_switch_to(a->root, LV_SCR_LOAD_ANIM_NONE, 0);
+        }
+    }
+
+    /* 只有它不再是前台屏时才删除（禁止删除活动屏） */
+    if (lv_scr_act() != dummy) lv_obj_del(dummy);
+
+    lvgl_port_unlock();
+    ESP_LOGI(TAG, "rebuilt apps for theme change");
+    return ESP_OK;
 }
 
 bool fw_app_mgr_is_home(void)
