@@ -3,7 +3,7 @@
  *
  * SZPI-OS - BSP (Board Support Package) Initialization
  *
- * 按正确顺序初始化所有底层外设，为 HAL 层提供干净的起点。
+ * 按正确顺序初始化所有底层外设，为 Peripherals 层提供干净的起点。
  */
 
 #include "drv_common.h"
@@ -46,7 +46,7 @@ esp_err_t bsp_init(esp_lcd_panel_handle_t *out_lcd_panel,
 
     // 1. I2C 总线 (最早，所有 I2C 设备都依赖它)
     ESP_ERROR_CHECK(bsp_i2c_init());
-    ESP_LOGI(TAG, "I2C0 initialized (GPIO1=SDA, GPIO2=SCL, 100kHz)");
+    ESP_LOGI(TAG, "I2C0 initialized (GPIO1=SDA, GPIO2=SCL, 100 kHz)");
 
     // 2. LEDC (背光 PWM，在 SPI LCD 之前初始化)
     ESP_ERROR_CHECK(drv_ledc_init());
@@ -57,7 +57,7 @@ esp_err_t bsp_init(esp_lcd_panel_handle_t *out_lcd_panel,
     ESP_LOGI(TAG, "PCA9557 initialized");
 
     // 4. ST7789 LCD 面板 (SPI3_HOST)
-    ESP_ERROR_CHECK(drv_st7789_init(true));  // true = CS 由 PCA9557 控制
+    ESP_ERROR_CHECK(drv_st7789_init());  // CS 由 PCA9557.BIT0 控制
     ESP_LOGI(TAG, "ST7789 initialized");
 
     // 5. FT6336 触摸 (I2C0)

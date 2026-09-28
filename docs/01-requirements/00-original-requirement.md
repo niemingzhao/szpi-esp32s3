@@ -12,10 +12,10 @@ SZPI-OS
 
 - 模组：ESP32-S3-WROOM-1-N16R8（Xtensa LX7 双核 240MHz / 内置 SRAM 512KB / 外置 PSRAM 8MB Octal 80MHz / 外置 Flash 16MB / Wi-Fi 802.11 b/g/n 2.4GHz 40MHz 带宽 / Bluetooth 5 LE + Bluetooth Mesh / 集成 AI 向量指令）
 - 显示屏：ST7789，2.0 寸 IPS 全视角，分辨率 320×240，SPI 接口
-- 触摸屏：FT6336，电容触摸，I²C 接口
-- 姿态传感器：QMI8658，三轴加速度 + 三轴陀螺仪，I²C 接口
-- 音频 DAC：ES8311，单通道，I²C 接口
-- 音频 ADC：ES7210，四通道（板子使用三通道），I²C 接口
+- 触摸屏：FT6336，电容触摸，I2C 接口
+- 姿态传感器：QMI8658，三轴加速度 + 三轴陀螺仪，I2C 接口
+- 音频 DAC：ES8311，单通道，I2C 接口
+- 音频 ADC：ES7210，四通道（板子使用三通道），I2C 接口
 - 音频功放：NS4150B，单声道 D 类音频放大器
 - 麦克风：ZTS6216，双路模拟输出
 - 喇叭：DB1811AB50，1811 音腔喇叭，1W
@@ -26,8 +26,8 @@ SZPI-OS
 - TF 卡接口：1-SD 模式，SDMMC 连接 ESP32
 - 按键：1 个复位按键 + 1 个用户自定义按键（BOOT，GPIO0）
 - Type-C 接口：供电、程序下载、程序调试、USB 数据通信
-- IO 扩展芯片：PCA9557PW，I²C 接口，扩展 3 路 IO（LCD_CS、PA_EN、DVP_PWDN）
-- 外扩接口：1 路 I²C 接口 + 1 路多功能接口（GH1.25 5P 端子，可输出 3.3V 和 5V，引出 GPIO10、GPIO11，支持 GPIO/串口/I²C/CAN/PWM）
+- IO 扩展芯片：PCA9557PW，I2C 接口，扩展 3 路 IO（LCD_CS、PA_EN、DVP_PWDN）
+- 外扩接口：1 路 I2C 接口 + 1 路多功能接口（GH1.25 5P 端子，可输出 3.3V 和 5V，引出 GPIO10、GPIO11，支持 GPIO/UART/CAN/PWM）
 - 板子尺寸：69 × 41 × 14 mm
 
 ## 核心功能范围
@@ -124,7 +124,7 @@ SZPI-OS
 - TF 卡挂载（FAT）
 - SD 卡热插拔
 - 文件读写
-- 内置 Flash 文件系统（LittleFS）
+- 内置 Flash 文件系统（SPIFFS）
 - 文件系统格式化
 - 磁盘空间查询
 - NVS 配置存储

@@ -1,23 +1,23 @@
 # 应用框架详细设计
 
-应用框架提供 app 注册、生命周期、消息路由、权限管理等机制。本文档定义 app 编程模型、与 framework / services 的交互约定。
+应用框架提供 App 注册、生命周期、消息路由、权限管理等机制。本文档定义 App 编程模型、与 framework / services 的交互约定。
 
 ## 1. 应用模板
 
 ### 1.1 目录结构
 
-每个 app 一个独立子目录：
+每个 App 一个独立子目录：
 
 ```
 apps/app_clock/
-├── CMakeLists.txt        # 包含 app 源文件到主固件
-├── app_clock.h           # app 头文件（可选）
-├── app_clock.c           # app 主体
-└── assets/               # app 私有资源（可选）
+├── CMakeLists.txt        # 包含 App 源文件到主固件
+├── app_clock.h           # App 头文件（可选）
+├── app_clock.c           # App 主体
+└── assets/               # App 私有资源（可选）
     └── icon_64.c         # 桌面图标
 ```
 
-### 1.2 最小 app 示例
+### 1.2 最小 App 示例
 
 ```c
 // apps/app_clock/app_clock.c
@@ -109,7 +109,7 @@ FW_APP_REGISTER(
 
 ### 2.3 重要约束
 
-- **`on_create` 必须快速**（< 100ms），避免拖慢桌面启动
+- **`on_create` 必须快速**（< 100 ms），避免拖慢桌面启动
 - **LVGL 操作必须在 `lvgl_port_lock(0) / unlock()` 之间**
 - **资源分配失败必须优雅降级**：如果 PSRAM 不够，应该显示错误页而非崩溃
 - **所有定时器必须在 `on_destroy` 删除**，否则下一次启动会泄漏
@@ -170,7 +170,7 @@ svc_settings_set_u32("app_music", "volume", new_volume);
 
 ```c
 // 单次提示
-svc_audio_play_tone_async(1000, 100);   // 1kHz, 100ms
+svc_audio_play_tone_async(1000, 100);   // 1 kHz, 100 ms
 ```
 
 ## 4. App 内部状态管理
@@ -269,7 +269,7 @@ svc_event_bus_subscribe(SVC_EVENT_USER_BASE, on_user_evt, NULL);
 ### 6.3 URI 启动
 
 ```c
-// 通过 URI 启动其他 app
+// 通过 URI 启动其他 App
 fw_app_mgr_launch("Music");
 fw_app_mgr_launch("File?path=/sdcard/music");
 ```
@@ -416,7 +416,7 @@ static void on_start(void *ctx) {
 
 ## 11. 权限管理（Phase 3）
 
-每个 app 声明需要的权限：
+每个 App 声明需要的权限：
 
 ```c
 typedef enum {
@@ -438,7 +438,7 @@ const fw_perm_t app_perms[] = {
 
 ESP32-S3 无 MMU，软件沙箱措施：
 
-- 每个 app 独立 NVS 命名空间
-- 每个 app 独立文件目录（`/internal/apps/<name>/`、`/sdcard/<name>/`）
-- app 崩溃由 Task Watchdog 检测并重启系统
-- 不允许 app 直接调用 HAL / Drivers（编译时约束）
+- 每个 App 独立 NVS 命名空间
+- 每个 App 独立文件目录（`/internal/apps/<name>/`、`/sdcard/<name>/`）
+- App 崩溃由 Task Watchdog 检测并重启系统
+- 不允许 App 直接调用 Peripherals / Drivers（编译时约束）

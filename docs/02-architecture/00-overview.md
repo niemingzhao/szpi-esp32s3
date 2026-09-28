@@ -8,7 +8,7 @@ SZPI-OS 的架构满足：
 |------|------|
 | 流畅 UI | 触摸、状态栏、通知、应用切换响应迅速 |
 | 可学习 | 代码结构清晰，每层职责明确 |
-| 可扩展 | 添加新 app 简单，HAL 可替换 |
+| 可扩展 | 添加新 App 简单，Peripherals 可替换 |
 | 可裁剪 | 各层通过 menuconfig / 编译宏开关，按需编译 |
 | 极客友好 | 提供调试入口、串口 shell、性能监控 |
 
@@ -20,7 +20,7 @@ SZPI-OS 的架构满足：
 │   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │
 │   │  Clock   │ │  Music   │ │   File   │ │ Settings │ │   ...    │ │
 │   └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │
-│   每个 App 是独立的 FreeRTOS 任务，通过 framework API 与系统交互      │
+│   App 通过 framework API 与系统交互，生命周期由 fw_app_mgr 管理        │
 └──────────────┬─────────────────────────────────────────────────────┘
                │  app_if.h
 ┌──────────────▼─────────────────────────────────────────────────────┐
@@ -38,9 +38,9 @@ SZPI-OS 的架构满足：
 │   └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ │
 │   跨模块业务逻辑：音频编解码、网络协议栈、文件系统抽象、通知分发       │
 └──────────────┬─────────────────────────────────────────────────────┘
-               │  hal_if.h
+               │  periph_if.h
 ┌──────────────▼─────────────────────────────────────────────────────┐
-│              HAL Layer (硬件抽象层)                                 │
+│              Peripherals Layer (外设抽象层)                         │
 │   ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐  │
 │   │  LCD │ │Touch │ │Codec │ │ IMU  │ │  TF  │ │ Cam  │ │ IO Exp│  │
 │   └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘  │
@@ -58,7 +58,7 @@ SZPI-OS 的架构满足：
                │
 ┌──────────────▼─────────────────────────────────────────────────────┐
 │           ESP-IDF + FreeRTOS (内核层)                               │
-│   NVS / VFS / LwIP / WiFi / BT / SDMMC / SPI / I2C / I2S / LVGL    │
+│   NVS / VFS / LwIP / Wi-Fi / BT / SDMMC / SPI / I2C / I2S / LVGL   │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,21 +84,21 @@ SZPI-OS 的架构满足：
 **约束**：
 - 不调用任何其他 SZPI-OS 层
 - 只依赖 ESP-IDF / FreeRTOS / 第三方组件
-- 输出面向 HAL 的函数
+- 输出面向 Peripherals 的函数
 
-### 3.2 HAL 层
+### 3.2 Peripherals 层
 
-**职责**：提供面向业务的硬件抽象 API，隐藏具体芯片型号。
+**职责**：提供面向业务的外设抽象 API，隐藏具体芯片型号。
 
 **包含**：
-- `hal_lcd` - 显示屏
-- `hal_touch` - 触摸
-- `hal_audio` - 音频
-- `hal_imu` - 姿态
-- `hal_storage` - 存储
-- `hal_camera` - 摄像头
-- `hal_io_exp` - IO 扩展
-- `hal_button` - 按键
+- `periph_lcd` - 显示屏
+- `periph_touch` - 触摸
+- `periph_audio` - 音频
+- `periph_imu` - 姿态
+- `periph_storage` - 存储
+- `periph_camera` - 摄像头
+- `periph_io_exp` - IO 扩展
+- `periph_button` - 按键
 
 **约束**：
 - 只调用 Drivers 层 + ESP-IDF
@@ -107,19 +107,19 @@ SZPI-OS 的架构满足：
 
 ### 3.3 Services 层
 
-**职责**：提供跨多个 HAL 的业务服务，处理协议、状态、并发。
+**职责**：提供跨多个 Peripherals 的业务服务，处理协议、状态、并发。
 
 **包含**：
 - `svc_time` - 时间管理（SNTP 同步、时区）
 - `svc_audio` - 音频播放、录音、提示音
-- `svc_net` - WiFi、BLE、HTTP、MQTT
+- `svc_net` - Wi-Fi、BLE、HTTP、MQTT、WebSocket
 - `svc_storage` - 文件系统、路径管理、应用沙箱
 - `svc_notification` - 通知队列、分类、回调
 - `svc_power` - 电源管理（背光超时、休眠）
 - `svc_event_bus` - 事件总线（贯穿所有层）
 
 **约束**：
-- 调用 HAL 层
+- 调用 Peripherals 层
 - 不调用 Framework / Apps
 - 每个服务一个独立的 FreeRTOS 任务（必要时）
 
@@ -139,14 +139,14 @@ SZPI-OS 的架构满足：
 
 **约束**：
 - 调用 Services 层
-- 不直接调用 HAL（必须经 Services）
+- 不直接调用 Peripherals（必须经 Services）
 - 强依赖 LVGL
 
 ### 3.5 Apps 层
 
-**职责**：独立的应用，每个 app 是一个子目录，编译进同一个 firmware。
+**职责**：独立的应用，每个 App 是一个子目录，编译进同一个 firmware。
 
-**内置应用**（共 16 个）：
+**内置应用**（共 17 个）：
 - `app_clock` - 时钟
 - `app_settings` - 设置
 - `app_music` - 音乐播放器
@@ -167,7 +167,7 @@ SZPI-OS 的架构满足：
 
 **约束**：
 - 调用 Framework + Services 层
-- 不直接调用 HAL
+- 不直接调用 Peripherals
 - 通过 `fw_app_mgr_register` 注册
 
 ### 3.6 Main（`main/`）
@@ -176,7 +176,7 @@ SZPI-OS 的架构满足：
 
 **包含**：
 - `main.c` - app_main() 函数
-- `app_register.c` - 所有内置 app 的注册表
+- `app_register.c` - 所有内置 App 的注册表
 
 ## 4. 关键技术选型
 
@@ -185,26 +185,25 @@ SZPI-OS 的架构满足：
 | 操作系统 | FreeRTOS | ESP-IDF 内置 |
 | GUI | LVGL | 嵌入式 GUI |
 | LVGL 适配 | esp_lvgl_port | 触摸适配、线程安全 |
-| 文件系统 | FAT32 (TF) + LittleFS (内置 Flash) | 双 FS |
-| 持久化 | NVS | 系统配置、WiFi 凭据 |
+| 文件系统 | FAT32 (TF) + SPIFFS (内置 Flash) | 双 FS |
+| 持久化 | NVS | 系统配置、Wi-Fi 凭据 |
 | 音频解码 | helix MP3 | MP3 解码 |
-| 蓝牙 | NimBLE | BLE 主机 / 外设 |
+| 蓝牙 | Bluedroid | BLE 主机 / 外设 |
 | HTTP | esp_http_client | HTTP 客户端 |
-| MQTT | esp-mqtt | MQTT 客户端 |
+| MQTT | mqtt | MQTT 客户端 |
 | WebSocket | esp_websocket_client | WebSocket 客户端 |
-| OTA | esp_app_update | OTA 升级 |
+| OTA | esp_https_ota | OTA 升级（HTTPS） |
 
 ## 5. 数据流
 
 ### 5.1 触摸事件流
 
 ```
-FT6336 中断 / 轮询
-  → drv_ft6336_read()
-    → hal_touch_get_xy()
-      → fw_input_dispatch()
-        → 当前激活 app 的 LVGL input device 回调
-        → 或全局手势回调（返回、HOME）
+FT6336 轮询（单点）
+  → periph_touch 扫描任务：缓存坐标 + 手势识别
+    → LVGL input device（read_cb 读取缓存）
+      → 当前激活 App 的控件回调
+      → 或全局手势回调（返回、HOME）
 ```
 
 ### 5.2 音频播放流
@@ -223,11 +222,11 @@ App 调用 svc_audio_play(path)
 ### 5.3 通知流
 
 ```
-App 调用 svc_notification_send(noti)
+App 调用 svc_notification_post(noti)
   → svc_notification 队列
     → 触发声音提示（svc_audio）
     → 更新通知中心 UI（fw_notification）
-      → 用户点击 → 跳转到目标 app
+      → 用户点击 → 跳转到目标 App
 ```
 
 ### 5.4 配置持久化流
@@ -237,7 +236,7 @@ App 调用 svc_settings_set(key, value)
   → NVS write
   → 触发变更事件
     → fw_app_mgr_broadcast(KEY_CHANGED)
-      → 关心此 key 的 app 收到通知并刷新 UI
+      → 关心此 key 的 App 收到通知并刷新 UI
 ```
 
 ## 6. 任务规划
@@ -252,11 +251,11 @@ App 调用 svc_settings_set(key, value)
 | `imu_task` | 3 | 0 | 周期性读取 IMU 数据 |
 | `audio_play_task` | 6 | 1 | 音频解码 + 写入 I2S |
 | `audio_feed_task` | 6 | 1 | 麦克风采集 |
-| `net_event_task` | 4 | 0 | WiFi 事件处理 |
+| `net_event_task` | 4 | 0 | Wi-Fi 事件处理 |
 | `ntp_sync_task` | 2 | 0 | SNTP 周期同步 |
 | `power_task` | 2 | 0 | 背光超时、休眠 |
-| `sd_monitor_task` | 3 | 0 | SD 卡热插拔监测 |
-| `app_<name>_task` | 各异 | 各异 | 应用私有任务 |
+| `sd_monitor_task` | 3 | 0 | TF 卡热插拔监测 |
+| `app_<name>_task` | 各异 | 各异 | 应用私有任务（可选） |
 
 ### 6.2 任务间通信
 
@@ -269,17 +268,13 @@ App 调用 svc_settings_set(key, value)
 
 ```
 1. nvs_flash_init()
-2. Drivers 初始化（I2C, SPI, LEDC, PCA9557）
-3. HAL 初始化（LCD, Touch, IMU, Codec, Storage, Camera, Button, IO）
-4. LVGL port 初始化
-5. 注册 LVGL display + input device
-6. Services 启动（EventBus, Time, Audio, Net, Storage, Notification, Power）
-7. Framework 初始化（Theme, Asset, Window, AppMgr）
-8. Apps 注册
-9. 显示启动 logo 动画
-10. 启动桌面
-11. 创建 LVGL 任务
-12. 进入事件循环
+2. Drivers 初始化 bsp_init()：I2C / SPI / LEDC / PCA9557 / ST7789 / FT6336 / BOOT 键 / QMI8658
+3. Peripherals 初始化 peripherals_init_all()：IO / Audio / LCD（含 LVGL display）/ Touch / IMU / Storage / Button
+4. Services 启动：EventBus / Storage / Time / Audio / Net / Power / Notification
+5. Framework 初始化：Theme / Asset / Window / Input / StatusBar / CtrlCenter / NotiCenter / AppMgr
+6. Apps 注册
+7. 显示启动 logo 动画
+8. 启动桌面
 ```
 
 ## 8. 内存预算
@@ -290,7 +285,7 @@ App 调用 svc_settings_set(key, value)
 | PSRAM | 8 MB | LVGL framebuffer、字体、图片、视频缓冲 |
 | Flash App (factory + ota_0) | 各 4 MB | 用户应用、字库、图片素材 |
 | Flash App (ota_1) | 4 MB | OTA 备份 |
-| Flash FS (storage) | 3 MB | LittleFS：配置、脚本、用户数据 |
+| Flash FS (storage) | 3 MB | SPIFFS：配置、脚本、用户数据 |
 
 **关键原则**：
 - LVGL framebuffer 强制放在 PSRAM
@@ -307,12 +302,12 @@ szpi-esp32s3/
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── main.c                  # app_main()
-│   └── app_register.c          # app 注册表
+│   └── app_register.c          # App 注册表
 ├── drivers/                    # Drivers 层
 │   ├── CMakeLists.txt
 │   ├── include/
 │   └── src/
-├── hal/                        # HAL 层
+├── peripherals/                # Peripherals 层
 │   ├── CMakeLists.txt
 │   ├── include/
 │   └── src/
@@ -330,9 +325,9 @@ szpi-esp32s3/
 │   ├── app_music/
 │   ├── app_settings/
 │   └── .../
-├── components/                 # 第三方 ESP-IDF 组件依赖
-│   ├── lvgl/
-│   ├── esp_lvgl_port/
+├── managed_components/         # 组件管理器自动填充（按构建产物对待）
+│   ├── lvgl__lvgl/
+│   ├── espressif__esp_lvgl_port/
 │   └── ...
 └── docs/
     ├── 01-requirements/
@@ -347,7 +342,7 @@ szpi-esp32s3/
 | Apps | 应用 |
 | Framework | 窗口管理 + 控件系统 + 资源管理 |
 | Services | 系统服务（音频 / 网络 / 存储） |
-| HAL | 硬件抽象层 |
+| Peripherals | 外设抽象层 |
 | Drivers | 内核驱动 |
 | Main (app_main) | 系统启动器 |
 
@@ -357,4 +352,4 @@ szpi-esp32s3/
 - **服务总线**：跨层通信统一通过 svc_event_bus
 - **静态库组织**：每层编译为静态库，由 main 链接
 - **LVGL 封装**：所有 UI 控件封装在 Framework 层
-- **应用隔离**：每个 app 独立 NVS 命名空间 + 独立目录
+- **应用隔离**：每个 App 独立 NVS 命名空间 + 独立目录

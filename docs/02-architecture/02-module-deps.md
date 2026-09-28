@@ -31,7 +31,7 @@
        │        │        │        │        │        │        │
        ▼        ▼        ▼        ▼        ▼        ▼        ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                                HAL                                        │
+│                           Peripherals                                    │
 │   ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐                  │
 │   │LCD │ │Tch │ │Aud │ │IMU │ │Stor│ │Cam │ │ IEx│ │ Btn│                  │
 │   └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘ └─┬──┘                  │
@@ -50,8 +50,8 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                       ESP-IDF + FreeRTOS + Third-Party                    │
 │   driver/i2c  driver/spi  driver/i2s  driver/sdmmc  driver/ledc           │
-│   esp_lcd  esp_lcd_touch  esp_timer  nvs_flash  esp_vfs  esp_event         │
-│   esp_wifi  esp_bt  esp_http_client  esp_mqtt  lvgl  esp_lvgl_port         │
+│   esp_lcd  esp_lcd_touch  esp_timer  nvs_flash  vfs  esp_event             │
+│   esp_wifi  bt  esp_http_client  mqtt  lvgl  esp_lvgl_port              │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,7 +82,7 @@ fw_app_mgr ──→ fw_window ──→ fw_theme
                 ├─→ fw_statusbar ──→ svc_time
                 ├─→ fw_control_center ──→ svc_net, svc_power, svc_audio
                 ├─→ fw_notification ──→ svc_notification
-                └─→ fw_input ──→ hal_touch (经 svc_event_bus)
+                └─→ fw_input ──← periph_touch（经 svc_event_bus）
 
 fw_asset ──→ (不依赖其他 fw，可独立)
 fw_theme ──→ svc_settings
@@ -91,46 +91,34 @@ fw_theme ──→ svc_settings
 ## 4. 启动依赖顺序
 
 ```
-bsp_init()                  // Drivers 初始化底层
+nvs_flash_init()
     │
-    ├── drv_pca9557_init()         // IO 扩展（最早，LCD_CS 需要它）
-    ├── hal_audio_init()           // Codec（PCA9557 之后，PA_EN 需要它）
-    ├── hal_lcd_init()             // LCD
-    ├── hal_touch_init()           // Touch
-    ├── hal_imu_init()             // IMU
-    ├── hal_storage_init()         // TF + LittleFS
-    ├── hal_camera_init()          // Camera (可选)
-    └── hal_button_init()          // BOOT key
+    ▼
+bsp_init()                   // Drivers：I2C → LEDC → PCA9557 → ST7789 → FT6336 → BOOT 键 → QMI8658
+    │
+    ▼
+peripherals_init_all()       // Peripherals
+    ├── periph_io_exp_init()        // PCA9557（LCD_CS / PA_EN / DVP_PWDN 的前提）
+    ├── periph_audio_init()         // 音频
+    ├── periph_lcd_init()           // LCD + LVGL display
+    ├── periph_touch_init()         // 触摸（注册 LVGL input device）
+    ├── periph_imu_init()           // IMU
+    ├── periph_storage_init()       // TF(FAT) + SPIFFS
+    ├── periph_camera_init()        // Camera
+    └── periph_button_init()        // BOOT 键
 
     │
     ▼
-svc_event_bus_init()         // 必须最先，其他服务都依赖它
-svc_storage_init()           // 后续 app 都要用文件系统
-svc_time_init()              // 后续服务依赖时间
-svc_audio_init()             // 异步启动后台任务
-svc_net_init()               // 异步启动 WiFi 状态机
-svc_power_init()             // 监测背光
-svc_notification_init()      // 监听事件，注册到 UI
-
+services_init()              // EventBus → Storage → Time → Audio → Net → Power → Notification
     │
     ▼
-fw_init()                    // 初始化 LVGL（已由 lvgl_port 完成）
-fw_theme_init()
-fw_asset_init()
-fw_window_init()
-fw_input_init()
-fw_statusbar_create()
-fw_control_center_create()
-fw_notification_create()
-fw_app_mgr_init()
-
+fw_init()                    // Theme / Asset / Window / Input / StatusBar / CtrlCenter / NotiCenter / AppMgr
     │
     ▼
-app_register_all()           // 注册所有内置 app
-
+app_register_all()           // 注册所有内置 App
     │
     ▼
-fw_app_mgr_launch("Home")    // 启动桌面（Home 是个特殊 app）
+fw_app_mgr_launch("Home")    // 启动桌面
 ```
 
 ## 5. CMake 依赖声明
@@ -142,17 +130,17 @@ fw_app_mgr_launch("Home")    // 启动桌面（Home 是个特殊 app）
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES driver esp_lcd esp_timer freertos
+    REQUIRES driver esp_lcd esp_lcd_touch esp_lcd_touch_ft5x06 esp_timer freertos
 )
 ```
 
 ```cmake
-# hal/CMakeLists.txt
+# peripherals/CMakeLists.txt
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES drivers driver esp_lcd esp_lcd_touch driver esp_codec_dev
-    PRIV_REQUIRES freertos esp_timer
+    REQUIRES drivers driver esp_lcd esp_lcd_touch esp_lvgl_port nvs_flash esp_timer freertos fatfs sdmmc spiffs
+    PRIV_REQUIRES esp_lcd_touch_ft5x06
 )
 ```
 
@@ -161,8 +149,8 @@ idf_component_register(
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES hal esp_wifi esp_bt nvs_flash esp_http_client
-    PRIV_REQUIRES drivers freertos cJSON
+    REQUIRES peripherals esp_wifi bt nvs_flash esp_http_client
+    PRIV_REQUIRES drivers freertos json
 )
 ```
 
@@ -179,11 +167,12 @@ idf_component_register(
 ```cmake
 # apps/CMakeLists.txt
 idf_component_register(
-    SRC_DIRS app_clock app_music app_settings app_file_browser
-              app_calculator app_camera app_recorder app_about
+    SRC_DIRS app_clock app_settings app_music app_recorder app_image
+              app_video app_camera app_file app_editor app_calc
+              app_imu app_ble app_browser app_ota app_debug app_about app_factory
     INCLUDE_DIRS .
     REQUIRES framework services
-    PRIV_REQUIRES freertos cJSON
+    PRIV_REQUIRES freertos json
 )
 ```
 
@@ -201,7 +190,6 @@ chmorgan/esp-audio-player       # 音频播放
 chmorgan/esp-file-iterator      # 文件迭代器
 espressif/mdns                  # mDNS 服务
 espressif/esp_websocket_client  # WebSocket
-espressif/cJSON                 # JSON 解析
 ```
 
 各组件使用各自最新稳定版本。

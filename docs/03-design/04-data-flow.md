@@ -5,7 +5,7 @@
 ## 1. 开机启动
 
 ```
-[用户按下 BOOT 或插入电源]
+[插入电源 / 按下复位键]
         │
         ▼
    [ESP32 引导]
@@ -13,10 +13,11 @@
         ▼
    [app_main()]
         │
-        ├─→ bsp_init()           // I2C, SPI, LEDC, PCA9557
-        ├─→ hal_init_all()       // LCD, Touch, Audio, IMU, Storage, Camera, Button, IO
+        ├─→ bsp_init()           // I2C, SPI, LEDC, PCA9557, LCD, Touch, Key, IMU
+        ├─→ peripherals_init_all() // IO, Audio, LCD(+LVGL), Touch, IMU, Storage, Button
         │     │
-        │     └─→ lvgl_port_init() + lvgl_port_add_disp()
+        │     └─→ periph_lcd_init() 内部 lvgl_port_init() + lvgl_port_add_disp()
+        │           periph_touch_init() 注册 LVGL input device
         │
         ├─→ services_init()       // EventBus, Storage, Time, Audio, Net, Power, Noti
         │     │
@@ -24,9 +25,9 @@
         │
         ├─→ fw_init()            // Theme, Asset, Window, Input, StatusBar, CtrlCenter, NotiCenter, AppMgr
         │
-        ├─→ app_register_all()   // 注册所有 app
+        ├─→ app_register_all()   // 注册所有 App
         │
-        ├─→ fw_boot_animation()  // Logo 动画 1.5s
+        ├─→ fw_boot_animation()  // Logo 动画 1.5 s
         │
         └─→ fw_app_mgr_launch("Home")
               │
@@ -38,7 +39,7 @@
 | 阶段 | 目标时间 |
 |------|----------|
 | `bsp_init` | < 200 ms |
-| `hal_init_all` | < 500 ms |
+| `peripherals_init_all` | < 500 ms |
 | `services_init` | < 100 ms（启动后台任务） |
 | `fw_init` | < 100 ms |
 | `app_register_all` | < 10 ms |
@@ -48,16 +49,18 @@
 ## 2. 触摸点击进入 App
 
 ```
-[FT6336 检测到触摸] (ISR / 轮询)
+[FT6336 轮询检测到触摸]
         │
         ▼
-[drv_ft6336_read 坐标]
+[esp_lcd_touch_read_data 读取坐标]
         │
         ▼
-[hal_touch 任务扫描]
+[periph_touch 扫描任务：读取 + 缓存 + 手势识别]
+        │
+        ├─→ periph_touch 回调（PRESS / TAP / LONG_PRESS / SWIPE...）
         │
         ▼
-[hal_touch 回调: lvgl_port_touch_cb]
+[LVGL indev read_cb 读取缓存坐标]
         │
         ▼
 [LVGL input device 派发到当前屏]
@@ -68,7 +71,7 @@
         ├─→ 点击了 "音乐" 图标
         │
         ▼
-[music_event_handler] (app 注册的 LVGL 事件回调)
+[music_event_handler] (App 注册的 LVGL 事件回调)
         │
         ▼
 [fw_app_mgr_launch("Music")]
@@ -79,7 +82,7 @@
         │
         └─→ fw_window_switch_to(music_root, FADE_ON)
               │
-              └─→ 触发淡入动画，300ms 后 Music 完全显示
+              └─→ 触发淡入动画，300 ms 后 Music 完全显示
 ```
 
 ## 3. 音乐播放
@@ -100,29 +103,29 @@
         │
         ├─→ svc_storage_open("/sdcard/music/xxx.mp3")
         ├─→ helix MP3 解码器初始化
-        ├─→ hal_audio_set_format(PLAY, ...)
-        ├─→ hal_audio_set_volume(current_vol)
+        ├─→ periph_audio_set_format(PLAY, ...)
+        ├─→ periph_audio_set_volume(current_vol)
         │
         ▼
 [play_task 循环]
         │
-        ├─→ 读取文件块 → 解码 → PCM 写入 hal_audio_write()
+        ├─→ 读取文件块 → 解码 → PCM 写入 periph_audio_write()
         │                                       │
         │                                       ▼
         │                                  I2S1 TX → ES8311 → NS4150B → 喇叭
         │
         └─→ 播放完成 → svc_audio_cb_t 回调 → SVC_EVENT_AUDIO_PLAYBACK_FINISHED
               │
-              └─→ statusbar 监听 → 更新 ♪ 图标
+              └─→ statusbar 监听 → 更新播放图标
 ```
 
-## 4. WiFi 连接
+## 4. Wi-Fi 连接
 
 ```
-[用户进入 Settings → WiFi 设置]
+[用户进入 Settings → Wi-Fi 设置]
         │
         ▼
-[app_settings 进入 wifi 子页]
+[app_settings 进入 Wi-Fi 子页]
         │
         ├─→ svc_net_wifi_scan(...)
         │     │
@@ -131,7 +134,7 @@
         ▼
 [显示 AP 列表]
         │
-        ├─→ 用户点击 "HomeWiFi"
+        ├─→ 用户点击 "HomeWi-Fi"
         │
         ▼
 [弹出密码输入框]
@@ -141,7 +144,7 @@
         ▼
 [svc_net_wifi_connect(&creds)]
         │
-        ├─→ svc_net 内部：连接 WiFi
+        ├─→ svc_net 内部：连接 Wi-Fi
         │     │
         │     └─→ ESP-IDF wifi 事件回调
         │
@@ -151,8 +154,8 @@
               │
               ├─→ svc_net_get_status() 获取 IP
               ├─→ svc_time_sync_ntp() 同步时间
-              ├─→ statusbar 更新 WiFi 图标
-              └─→ svc_notification_post("WiFi 已连接")
+              ├─→ statusbar 更新 Wi-Fi 图标
+              └─→ svc_notification_post("Wi-Fi 已连接")
 ```
 
 ## 5. 通知
@@ -167,7 +170,7 @@
         │
         └─→ 发布 SVC_EVENT_NOTIFICATION_POSTED
               │
-              ├─→ statusbar 更新 🔔 图标（红点）
+              ├─→ statusbar 更新通知图标（红点）
               │
               └─→ fw_notification 监听 → 在通知中心列表中显示
                     │
@@ -187,26 +190,26 @@
 ## 6. 锁屏超时 → 唤醒
 
 ```
-[svc_power_task 每秒检查]
+[power_task 每秒检查]
         │
         ├─→ 上次触摸后已过 N 秒？
         │     │
         │     └─→ 是 → svc_power_sleep()
         │              │
-        │              ├─→ hal_lcd_set_backlight(false)
-        │              └─→ hal_imu_deinit()（省电）
+        │              ├─→ periph_lcd_set_backlight(false)
+        │              └─→ periph_imu_deinit()（省电）
         │
         ▼
 [下次触摸发生]
         │
-        ├─→ hal_touch ISR
+        ├─→ periph_touch 扫描任务
         │     │
         │     └─→ svc_event_bus_publish(SVC_EVENT_TOUCH, ...)
         │           │
         │           └─→ svc_power 监听 → svc_power_wake()
         │                 │
-        │                 ├─→ hal_lcd_set_backlight(true)
-        │                 └─→ hal_imu_init()
+        │                 ├─→ periph_lcd_set_backlight(true)
+        │                 └─→ periph_imu_init()
         │
         └─→ svc_power 重置 timeout 计数
 ```
@@ -214,10 +217,10 @@
 ## 7. 电源菜单（长按 BOOT）
 
 ```
-[BOOT 按键 1.5s+]
+[BOOT 按键 1.5 s+]
         │
         ▼
-[hal_button 任务检测 LONG_PRESS]
+[periph_button 任务检测 LONG_PRESS]
         │
         ▼
 [fw_input 全局回调 → fw_show_power_menu()]
@@ -241,7 +244,7 @@
         ▼
 [app_ota 调用 svc_ota_check_and_update(url)]
         │
-        ├─→ 通过 HTTP GET 检查版本
+        ├─→ 通过 HTTPS GET 检查版本
         │     │
         │     ├─→ 当前是最新 → 显示"已是最新"
         │     └─→ 有新版本 → 显示对话框 [下载更新]
@@ -266,7 +269,7 @@
 [用户进入 Camera App，按下拍照]
         │
         ▼
-[cam_app 调用 hal_camera_capture(&frame)]
+[cam_app 调用 periph_camera_capture(&frame)]
         │
         ├─→ drv_gc0308_grab_frame()
         │     │
@@ -285,7 +288,7 @@
         └─→ fclose()
         │
         ▼
-[hal_camera_release_frame(&frame)]
+[periph_camera_release_frame(&frame)]
         │
         ▼
 [svc_notification_post("已保存到 DCIM")]
@@ -294,7 +297,7 @@
 ## 10. 语音唤醒（Phase 3）
 
 ```
-[mic_task 持续从 I2S 读取 PCM (16KHz)]
+[mic_task 持续从 I2S 读取 PCM (16 kHz)]
         │
         ▼
 [本地语音识别引擎处理]
@@ -317,13 +320,13 @@
 ## 11. 多任务切换
 
 ```
-[用户从 app A 长按 HOME 键]
+[用户从 App A 长按 HOME 键]
         │
         ▼
 [fw_app_mgr 弹出最近应用列表]
         │
         ▼
-[用户选择 app B]
+[用户选择 App B]
         │
         ▼
 [fw_app_mgr_back_to_app(B)]
@@ -340,7 +343,7 @@
 | 开机到首屏 | < 2.5 s |
 | App 切换 | < 500 ms |
 | 触摸响应 | < 100 ms |
-| WiFi 连接（已知） | < 5 s |
+| Wi-Fi 连接（已知） | < 5 s |
 | 拍照保存 | < 1 s |
 | MP3 启动 | < 300 ms |
 | UI 帧率 | ≥ 30 FPS |
@@ -355,8 +358,8 @@
 
 ### 13.2 潜在瓶颈
 
-- **SRAM**：512KB 内置，任务栈 + LVGL 控制块紧张
-- **PSRAM**：8MB，framebuffer 占大头
+- **SRAM**：512 KB 内置，任务栈 + LVGL 控制块紧张
+- **PSRAM**：8 MB，framebuffer 占大头
 - **音频 + UI 同时**：核心 1 跑音频解码，核心 0 跑 LVGL，互不干扰
 
 ## 14. 数据流图（综合）
@@ -371,7 +374,7 @@
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ HAL（业务语义封装）                                  │
+│ Peripherals（业务语义封装）                          │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐

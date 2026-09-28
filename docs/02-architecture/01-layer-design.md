@@ -5,7 +5,7 @@
 ### 1.1 允许的调用方向
 
 ```
-Apps       ──→ Framework ──→ Services ──→ HAL ──→ Drivers ──→ ESP-IDF
+Apps       ──→ Framework ──→ Services ──→ Peripherals ──→ Drivers ──→ ESP-IDF
    │            │             │           │         │
    └────────────┴─────────────┴───────────┴─────────┘
                           事件总线（双向）
@@ -15,19 +15,19 @@ Apps       ──→ Framework ──→ Services ──→ HAL ──→ Driver
 
 | 调用方 | 被调用方 | 状态 |
 |--------|----------|------|
-| HAL | Services | ❌ 禁止 |
-| HAL | Framework | ❌ 禁止 |
-| HAL | Apps | ❌ 禁止 |
-| Drivers | HAL 及以上 | ❌ 禁止 |
-| Services | Framework | ❌ 禁止 |
-| Services | Apps | ❌ 禁止 |
-| Framework | Apps | ❌ 禁止 |
-| Apps | HAL | ❌ 禁止 |
-| Apps | Drivers | ❌ 禁止 |
+| Peripherals | Services | 禁止 |
+| Peripherals | Framework | 禁止 |
+| Peripherals | Apps | 禁止 |
+| Drivers | Peripherals 及以上 | 禁止 |
+| Services | Framework | 禁止 |
+| Services | Apps | 禁止 |
+| Framework | Apps | 禁止 |
+| Apps | Peripherals | 禁止 |
+| Apps | Drivers | 禁止 |
 
 ### 1.3 例外
 
-- `lvgl_port_lock/unlock` 可在 Services 中使用（音频回调、传感器更新）
+- `lvgl_port_lock/unlock` 可在 Peripherals / Services 中使用（LVGL display、触摸 input device、传感器更新）
 - `esp_timer` / `FreeRTOS` API 可在任何层使用
 - 第三方组件的纯函数可在 Services / Apps 中直接调用
 
@@ -45,7 +45,7 @@ libszpi_framework.a
 libszpi_services.a
         │
         ▼ 依赖
-libszpi_hal.a
+libszpi_peripherals.a
         │
         ▼ 依赖
 libszpi_drivers.a
@@ -59,17 +59,10 @@ ESP-IDF + 第三方组件
 ```cmake
 cmake_minimum_required(VERSION 3.16)
 
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(szpi-os)
+set(EXTRA_COMPONENT_DIRS drivers peripherals services framework apps)
 
-set(EXTRA_COMPONENT_DIRS
-    "${CMAKE_CURRENT_SOURCE_DIR}/drivers"
-    "${CMAKE_CURRENT_SOURCE_DIR}/hal"
-    "${CMAKE_CURRENT_SOURCE_DIR}/services"
-    "${CMAKE_CURRENT_SOURCE_DIR}/framework"
-    "${CMAKE_CURRENT_SOURCE_DIR}/apps"
-    "${CMAKE_CURRENT_SOURCE_DIR}/components"
-)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(szpi-esp32s3)
 ```
 
 ### 2.3 每层 CMakeLists.txt 模板
@@ -93,43 +86,49 @@ idf_component_register(
 **示例**：
 ```c
 esp_err_t drv_pca9557_init(void);
-esp_err_t drv_pca9557_set_lcd_cs(uint8_t level);
-esp_err_t drv_pca9557_set_pa_en(uint8_t level);
-esp_err_t drv_pca9557_set_dvp_pwdn(uint8_t level);
+esp_err_t drv_pca9557_set_pin(uint8_t gpio_bit, uint8_t level);
+esp_err_t drv_st7789_init(void);
+esp_err_t drv_ft6336_init(void);
+esp_err_t drv_qmi8658_init(void);
+esp_err_t drv_key_init(void);
+esp_err_t drv_ledc_init(void);
 
-esp_err_t bsp_init(void);  // 板级初始化
+// 板级初始化，返回 LCD / 触摸 handle 供 Peripherals 层使用
+esp_err_t bsp_init(esp_lcd_panel_handle_t *panel,
+                   esp_lcd_panel_io_handle_t *io,
+                   esp_lcd_touch_handle_t *touch);
 ```
 
 **约束**：
-- 不调用任何 HAL / Services / Framework
+- 不调用任何 Peripherals / Services / Framework
 - 函数全部是阻塞的
 - 不创建 FreeRTOS 任务（除了 ISR handler 注册）
 
-### 3.2 HAL 层
+### 3.2 Peripherals 层
 
-**命名规则**：`hal_<device>_<action>`
+**命名规则**：`periph_<device>_<action>`
 
 **示例**：
 ```c
 typedef enum {
-    HAL_LCD_ROT_0 = 0,
-    HAL_LCD_ROT_90,
-    HAL_LCD_ROT_180,
-    HAL_LCD_ROT_270,
-} hal_lcd_rotation_t;
+    PERIPH_LCD_ROT_0 = 0,
+    PERIPH_LCD_ROT_90,
+    PERIPH_LCD_ROT_180,
+    PERIPH_LCD_ROT_270,
+} periph_lcd_rotation_t;
 
-esp_err_t hal_lcd_init(void);
-esp_err_t hal_lcd_set_brightness(uint8_t percent);
-esp_err_t hal_lcd_set_rotation(hal_lcd_rotation_t rot);
-uint16_t hal_lcd_get_width(void);
-uint16_t hal_lcd_get_height(void);
-lv_disp_t *hal_lcd_get_lvgl_disp(void);  // 唯一向 framework 暴露的 LVGL 对象
+esp_err_t periph_lcd_init(void);
+esp_err_t periph_lcd_set_brightness(uint8_t percent);
+esp_err_t periph_lcd_set_rotation(periph_lcd_rotation_t rot);
+uint16_t periph_lcd_get_width(void);
+uint16_t periph_lcd_get_height(void);
+lv_disp_t *periph_lcd_get_disp(void);  // 唯一向 framework 暴露的 LVGL 对象
 ```
 
 **约束**：
 - 不调用任何 Services / Framework / Apps
 - 可以创建 FreeRTOS 任务
-- LVGL 相关：`hal_lcd_get_lvgl_disp` 是唯一向 framework 暴露的 LVGL 对象
+- LVGL 相关：`periph_lcd_get_disp` 是唯一向 framework 暴露的 LVGL 对象
 
 ### 3.3 Services 层
 
@@ -155,7 +154,7 @@ esp_err_t svc_audio_register_callback(svc_audio_cb_t cb, void *user);
 ```
 
 **约束**：
-- 调用 HAL 层
+- 调用 Peripherals 层
 - 每个服务一个 FreeRTOS 任务
 - 异步 API + 回调（避免阻塞 LVGL 主线程）
 - 同步 API 仅限简单 setter（如音量、亮度）
@@ -176,7 +175,7 @@ typedef enum {
 
 typedef struct {
     const char *name;
-    const lv_img_dsc_t *icon;
+    const lv_img_dsc_t *icon_64;
     void *(*on_create)(void);
     void  (*on_start)(void *ctx);
     void  (*on_pause)(void *ctx);
@@ -193,7 +192,7 @@ esp_err_t fw_app_mgr_back_to_home(void);
 **约束**：
 - 调用 Services 层
 - 强依赖 LVGL
-- 不直接调用 HAL（必须经 Services）
+- 不直接调用 Peripherals（必须经 Services）
 - FW 内部状态由 `fw_*` 模块自己管理
 
 ### 3.5 Apps 层
@@ -228,7 +227,7 @@ static void on_destroy(void *ctx) {
 
 FW_APP_REGISTER(
     .name = "Clock",
-    .icon = &icon_clock_64,
+    .icon_64 = &icon_clock_64,
     .on_create = on_create,
     .on_destroy = on_destroy,
 );
@@ -236,7 +235,7 @@ FW_APP_REGISTER(
 
 **约束**：
 - 调用 Framework + Services
-- 不直接调用 HAL
+- 不直接调用 Peripherals
 - 通过 `FW_APP_REGISTER` 注册
 
 ## 4. 跨层通信：事件总线
@@ -285,8 +284,8 @@ esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t
 | Namespace | 用途 |
 |-----------|------|
 | `sys` | 系统设置（亮度、音量、语言、主题） |
-| `wifi` | WiFi 配置（SSID、密码、是否自动重连） |
-| `app_<name>` | 每个 app 自己的设置 |
+| `wifi` | Wi-Fi 配置（SSID、密码、是否自动重连） |
+| `app_<name>` | 每个 App 自己的设置 |
 | `ota` | OTA 状态 |
 
 ### 5.2 配置 API
@@ -321,9 +320,9 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
 
 ### 6.2 字体
 
-- `lv_font_montserrat_14` - 默认英文小字体
 - `lv_font_montserrat_20` - 标准文字
 - `lv_font_montserrat_24` - 标题
+- `lv_font_montserrat_32` - 大标题
 - `font_alipuhui20` - 中文 20px
 
 ## 7. 错误处理约定
@@ -332,7 +331,7 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
 
 - 所有公开 API 返回 `esp_err_t`
 - 成功：`ESP_OK`
-- 失败：`ESP_FAIL` / `ESP_ERR_INVALID_ARG` / `ESP_ERR_NO_MEM` / `ESP_ERR_TIMEOUT` / 自定义 `SZPI_ERR_*`
+- 失败：`ESP_FAIL` / `ESP_ERR_INVALID_ARG` / `ESP_ERR_NO_MEM` / `ESP_ERR_TIMEOUT` / 自定义 `ESP_ERR_SZPI_*`
 
 ### 7.2 自定义错误码
 
@@ -347,5 +346,5 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
 
 ### 7.3 日志
 
-- 每个模块有自己的 TAG：`TAG = "drv.st7789"`, `TAG = "hal.lcd"`, `TAG = "svc.audio"`, `TAG = "fw.window"`, `TAG = "app.clock"`
+- 每个模块有自己的 TAG：`TAG = "drv.st7789"`, `TAG = "periph.lcd"`, `TAG = "svc.audio"`, `TAG = "fw.window"`, `TAG = "app.clock"`
 - 用 `ESP_LOGI / ESP_LOGW / ESP_LOGE / ESP_LOGD`，禁止 `printf`

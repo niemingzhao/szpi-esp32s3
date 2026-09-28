@@ -45,7 +45,7 @@ esp_err_t drv_ledc_init(void)
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
 
     s_initialized = true;
-    ESP_LOGI(TAG, "LEDC backlight initialized (GPIO42, 5kHz, 10-bit)");
+    ESP_LOGI(TAG, "LEDC backlight initialized (GPIO42, 5 kHz, 10-bit)");
     return ESP_OK;
 }
 

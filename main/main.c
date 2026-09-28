@@ -1,8 +1,11 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * SZPI-OS v0.2 - Drivers Layer Integration
- * 使用 drivers/ 层初始化硬件，LVGL 启动屏幕 + 按钮
+ * SZPI-OS v0.3 - Drivers + Peripherals Layer Integration
+ *
+ * 启动序列：
+ *   NVS → bsp_init()（Drivers）→ peripherals_init_all()（含 LVGL display/touch）
+ *   → 创建 UI → 挂载内置 Flash（首次自动格式化）
  */
 
 #include <stdio.h>
@@ -10,56 +13,14 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_lvgl_port.h"
 #include "drv_common.h"
+#include "periph_common.h"
 #include "lvgl.h"
 
 static const char *TAG = "szpi-os";
-
-/* ============ 静态变量 ============ */
-
-static esp_lcd_panel_handle_t s_lcd_panel = NULL;
-static esp_lcd_panel_io_handle_t s_lcd_io = NULL;
-static esp_lcd_touch_handle_t s_touch = NULL;
-
-/* ============ LVGL 初始化 ============ */
-
-static esp_err_t bsp_lvgl_init(void)
-{
-    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
-
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle = s_lcd_io,
-        .panel_handle = s_lcd_panel,
-        .buffer_size = DRV_LCD_H_RES * 20,
-        .double_buffer = false,
-        .hres = DRV_LCD_H_RES,
-        .vres = DRV_LCD_V_RES,
-        .monochrome = false,
-        .rotation = {
-            .swap_xy = true,
-            .mirror_x = true,
-            .mirror_y = false,
-        },
-        .flags = {
-            .buff_dma = false,
-            .buff_spiram = true,
-        },
-    };
-    lv_disp_t *disp = lvgl_port_add_disp(&disp_cfg);
-    ESP_LOGI(TAG, "LVGL display added");
-
-    const lvgl_port_touch_cfg_t touch_cfg = {
-        .disp = disp,
-        .handle = s_touch,
-    };
-    lvgl_port_add_touch(&touch_cfg);
-    ESP_LOGI(TAG, "LVGL touch added");
-
-    return ESP_OK;
-}
 
 /* ============ UI ============ */
 
@@ -104,7 +65,7 @@ static void create_ui(void)
 
     // 底部状态栏
     lv_obj_t *status = lv_label_create(lv_scr_act());
-    lv_label_set_text(status, "v0.2 - Drivers Layer");
+    lv_label_set_text(status, "v0.3 - Peripherals Layer");
     lv_obj_set_style_text_color(status, lv_color_hex(0xBBBBBB), 0);
     lv_obj_align(status, LV_ALIGN_BOTTOM_MID, 0, -20);
 
@@ -127,18 +88,21 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // 2. BSP 初始化（Drivers 层）
-    ESP_ERROR_CHECK(bsp_init(&s_lcd_panel, &s_lcd_io, &s_touch));
+    // 2. Drivers 层初始化（I2C / SPI / LEDC / PCA9557 / LCD / Touch / Key / IMU）
+    //    handle 由 Peripherals 层通过 drv_*_get_* 获取，此处不需要
+    ESP_ERROR_CHECK(bsp_init(NULL, NULL, NULL));
 
-    // 3. LVGL 初始化
-    ESP_ERROR_CHECK(bsp_lvgl_init());
+    // 3. Peripherals 层初始化（含 LVGL display 与触摸 input device）
+    ESP_ERROR_CHECK(peripherals_init_all());
 
-    // 4. 打开背光 (80%)
-    drv_ledc_set_brightness(80);
-    ESP_LOGI(TAG, "Backlight on (80%%)");
-
-    // 5. 创建 UI
+    // 4. 创建 UI（背光已由 periph_lcd_init 按 NVS 亮度和默认值打开）
     create_ui();
     ESP_LOGI(TAG, "UI created");
+
+    // 5. 挂载内置 Flash 文件系统（首次自动格式化；放在 UI 之后避免阻塞首屏）
+    if (periph_storage_mount(PERIPH_STORAGE_INTERNAL_FLASH) != ESP_OK) {
+        ESP_LOGW(TAG, "internal storage mount failed");
+    }
+
     ESP_LOGI(TAG, "===== Ready =====");
 }

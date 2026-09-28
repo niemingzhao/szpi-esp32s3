@@ -6,7 +6,7 @@
 
 - SDA：GPIO1
 - SCL：GPIO2
-- 时钟频率：100 kHz（默认）/ 400 kHz（FT6336 用）
+- 时钟频率：100 kHz
 - 主机：I2C0
 
 #### I2C 总线从设备
@@ -47,13 +47,18 @@
 | WS | GPIO13 | 左右声道选择 |
 | DOUT | GPIO45 | 数据输出（到 ES8311 DAC） |
 | DIN | GPIO12 | 数据输入（从 ES7210 ADC） |
-| PA_EN | PCA9557.BIT1 | 功放使能，由 IO 扩展芯片控制 |
 
-- 主机：I2S1 (I2S_NUM_1)
+- 主机：I2S1（GPIO 矩阵映射，I2S0/I2S1 可选）
 - 采样率：16 kHz / 48 kHz 可配置
 - 位宽：16-bit
 - 通道数：2 (Stereo)
-- MCLK 倍频：384（MCLK = 16k × 384 = 6.144 MHz）
+- MCLK 倍频：384（16 kHz）/ 256（48 kHz）
+
+### 音频器件连接
+
+- ES7210：4 通道，使用 3 路（2 路 MIC + 1 路 ES8311 回环，回声消除）
+- ES8311：仅使用输出，分两路（ES7210 回声消除、NS4150B 功放）
+- NS4150B：单声道 D 类功放，PA_EN = PCA9557.BIT1，默认关闭
 
 ### SDMMC 总线（TF 卡）
 
@@ -88,21 +93,36 @@
 | PWDN | PCA9557.BIT2 |
 | RESET | NC |
 
-- 像素格式：JPEG / RGB565
+- 像素格式：RGB565（JPEG 由软件编码）
 - XCLK 频率：24 MHz
 - 帧缓冲：2 个，存放于 PSRAM
 - 抓取模式：CAMERA_GRAB_WHEN_EMPTY
 
-### USB 接口
+### USB 接口（原生 USB）
 
 | 信号 | 引脚 |
 |------|------|
 | USB_DP | GPIO20 |
 | USB_DM | GPIO19 |
 
-- 模式：仅 USB Serial/JTAG（默认调试）
-- 不启用 USB OTG 主机/设备模式
-- 用途：供电、CH340K 串口下载、调试
+- 接口：ESP32-S3 原生 USB-OTG，经 USB-HUB（CH334F）下行引出到 Type-C
+- 模式：仅 USB Serial/JTAG（默认调试），不启用 OTG 主机/设备模式
+
+### 串口（UART0 / CH340K）
+
+| 信号 | 引脚 | 说明 |
+|------|------|------|
+| U0TXD | GPIO43 | 接 CH340K |
+| U0RXD | GPIO44 | 接 CH340K |
+
+- CH340K 连接到 ESP32-S3 串口 0（UART0）
+- 用途：程序下载、串口调试
+
+### USB-HUB 拓扑
+
+- Type-C 接 CH334F（USB 2.0 HUB）上行；4 个下行口使用 2 个
+- 下行 D3：ESP32-S3 原生 USB-OTG（GPIO19/20）
+- 下行 D4：CH340K → UART0（GPIO43/44）
 
 ## 外设引脚与配置
 
@@ -137,7 +157,21 @@
 
 | 信号 | 引脚 | 说明 |
 |------|------|------|
-| BOOT 键 | GPIO0 | 下降沿中断 |
+| BOOT 键 | GPIO0 | 下降沿中断，内部上拉；正常运行时为用户按键 |
+| RESET 键 | EN | 系统复位 |
+
+## Strapping 引脚
+
+GPIO0、GPIO3、GPIO45、GPIO46 为 strapping 引脚。
+
+| 引脚 | 板上功能 | 说明 |
+|------|----------|------|
+| GPIO0 | BOOT 键 | 与 GPIO46 决定启动模式，低电平进入下载 |
+| GPIO3 | 摄像头 VSYNC | 复位时选择 JTAG 信号源 |
+| GPIO45 | I2S_DOUT | 复位时选择 VDD_SPI 电压 |
+| GPIO46 | 摄像头 HREF | 与 GPIO0 决定启动模式；下载时必须为低，板上有下拉 |
+
+- GPIO3/45/46 同时复用为摄像头与音频信号，上电时为高阻或低电平
 
 ## IO 扩展芯片 (PCA9557PW)
 
@@ -156,6 +190,8 @@
 
 默认配置：BIT0/BIT1/BIT2 设为输出，其他保持输入 → CONFIGURATION_PORT = 0xF8
 
+- 使用 LCD_CS / PA_EN / DVP_PWDN 前，需先初始化 PCA9557
+
 ## 引脚汇总（按 GPIO 编号排序）
 
 | GPIO | 功能 |
@@ -170,8 +206,8 @@
 | 7 | PCLK（摄像头） |
 | 8 | D2（摄像头） |
 | 9 | D7（摄像头） |
-| 10 | 未用 |
-| 11 | 未用 |
+| 10 | 外扩接口（GH1.25 多功能） |
+| 11 | 外扩接口（GH1.25 多功能） |
 | 12 | I2S_DIN |
 | 13 | I2S_WS |
 | 14 | I2S_BCLK |
@@ -182,13 +218,16 @@
 | 19 | USB_DM |
 | 20 | USB_DP |
 | 21 | SD_D0 |
-| 22~37 | 未用 |
+| 22~25 | 未用 |
+| 26~32 | 模组内 Flash/PSRAM（未引出） |
+| 33~37 | 八线 PSRAM 占用（不可用） |
 | 38 | I2S_MCLK |
 | 39 | LCD_DC |
 | 40 | LCD_MOSI |
 | 41 | LCD_SCLK |
 | 42 | LCD_BL（背光 PWM） |
-| 43~44 | 未用 |
+| 43 | UART0_TX（接 CH340K） |
+| 44 | UART0_RX（接 CH340K） |
 | 45 | I2S_DOUT |
 | 46 | HREF（摄像头） |
 | 47 | SD_CLK |
@@ -200,11 +239,16 @@
 - 端子规格：GH1.25 5P
 - 供电：3.3V 和 5V（可输出给外部传感器）
 - 接口类型：
-  - 第 1 路：I²C 接口（与板上 I²C 总线共用）
+  - 第 1 路：I2C 接口（与板上 I2C 总线共用）
   - 第 2 路：多功能接口
 - 多功能接口信号：GPIO10、GPIO11
 - 多功能接口复用：GPIO / UART / CAN / PWM
 - 电压注意：ESP32-S3 GPIO 为 3.3V，5V 信号需要电平转换
+
+## 电源
+
+- SY8088AAC 双路输出，每路 1A：MCU 电路 3V3，音频电路 AU_3V3
+- 供电：Type-C
 
 ## 关键 ESP-IDF 配置项 (sdkconfig)
 

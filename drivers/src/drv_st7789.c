@@ -22,7 +22,7 @@ static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
 static bool s_initialized = false;
 
-esp_err_t drv_st7789_init(bool cs_gpio_by_pca9557)
+esp_err_t drv_st7789_init(void)
 {
     if (s_initialized) {
         return ESP_OK;
@@ -39,10 +39,10 @@ esp_err_t drv_st7789_init(bool cs_gpio_by_pca9557)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(BSP_LCD_SPI_NUM, &buscfg, SPI_DMA_CH_AUTO));
 
-    // Panel IO - CS 由 PCA9557 控制时，填 GPIO_NUM_NC
+    // Panel IO - CS 由 PCA9557.BIT0 控制，因此不占用 GPIO
     const esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num = BSP_LCD_DC,
-        .cs_gpio_num = cs_gpio_by_pca9557 ? GPIO_NUM_NC : GPIO_NUM_NC,  // CS 由 PCA9557.BIT0 控制
+        .cs_gpio_num = GPIO_NUM_NC,
         .pclk_hz = BSP_LCD_PIXEL_CLOCK_HZ,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
@@ -76,7 +76,7 @@ esp_err_t drv_st7789_init(bool cs_gpio_by_pca9557)
     esp_lcd_panel_disp_on_off(s_panel_handle, true);
 
     s_initialized = true;
-    ESP_LOGI(TAG, "ST7789 initialized (SPI3, 80MHz, 320x240)");
+    ESP_LOGI(TAG, "ST7789 initialized (SPI3, 80 MHz, 320×240)");
     return ESP_OK;
 }
 

@@ -1,6 +1,6 @@
 # 系统服务层详细设计
 
-Services 层提供跨多个 HAL 的业务服务，处理协议、状态、并发。本文档定义每个服务的接口、内部状态、任务模型、消息流。
+Services 层提供跨多个 Peripherals 的业务服务，处理协议、状态、并发。本文档定义每个服务的接口、内部状态、任务模型、消息流。
 
 ## 1. 服务清单
 
@@ -9,7 +9,7 @@ Services 层提供跨多个 HAL 的业务服务，处理协议、状态、并发
 | Event Bus | `svc_event_bus.h` | 系统事件分发 |
 | Time | `svc_time.h` | SNTP 同步、时区 |
 | Audio | `svc_audio.h` | 音乐 / 录音 / 提示音 |
-| Network | `svc_net.h` | WiFi 状态机、HTTP/MQTT |
+| Network | `svc_net.h` | Wi-Fi 状态机、HTTP / MQTT / WebSocket |
 | Storage | `svc_storage.h` | 文件系统抽象 |
 | Notification | `svc_notification.h` | 通知队列、UI 路由 |
 | Power | `svc_power.h` | 电源管理 |
@@ -87,15 +87,15 @@ esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t
 - 单一 `dispatcher_task` (优先级 5, 核心 0) 从队列取事件并调用所有订阅者
 - 订阅者回调中禁止阻塞太久
 
-## 4. svc_time（时间服务）
+## 3. svc_time（时间服务）
 
-### 4.1 职责
+### 3.1 职责
 
 - SNTP 同步
 - 时区管理
 - 提供格式化时间 API
 
-### 4.2 接口
+### 3.2 接口
 
 ```c
 esp_err_t svc_time_init(void);
@@ -115,23 +115,23 @@ esp_err_t svc_time_format(int64_t ts, const char *fmt, char *buf, size_t len);
 esp_err_t svc_time_set_manual(int64_t ts);
 ```
 
-### 4.3 实现要点
+### 3.3 实现要点
 
 - `ntp_task` (优先级 2, 核心 0) 每 6 小时同步一次
 - 同步成功后发布 `SVC_EVENT_TIME_SYNCED`
 - 每分钟发送 `SVC_EVENT_TIME_CHANGED`
 - 用 `esp_netif_sntp` + `esp_sntp`
 
-## 5. svc_audio（音频服务）
+## 4. svc_audio（音频服务）
 
-### 5.1 职责
+### 4.1 职责
 
 - 音乐播放：MP3 / WAV
 - 录音：WAV 写入 TF 卡
 - 提示音（tone）：短促蜂鸣
 - 音量控制
 
-### 5.2 接口
+### 4.2 接口
 
 ```c
 typedef enum {
@@ -196,30 +196,30 @@ esp_err_t svc_audio_register_callback(svc_audio_cb_t cb, void *user);
 esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 ```
 
-### 5.3 任务架构
+### 4.3 任务架构
 
 ```
                 ┌────────────────┐
                 │  API Call      │
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   play_task 优先级 6, 核心 1, 栈 8KB
+                ┌────────────────┐   play_task 优先级 6, 核心 1, 栈 8 KB
                 │  play_task     │   解码 (helix MP3 / wav)
                 │  状态机        │   写入 I2S
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   rec_task 优先级 5, 核心 1, 栈 4KB
+                ┌────────────────┐   rec_task 优先级 5, 核心 1, 栈 4 KB
                 │  rec_task      │   读取 I2S
                 │  (录音时启用)  │   写 WAV 头 + PCM
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   tone_task 优先级 4, 核心 1, 栈 2KB
+                ┌────────────────┐   tone_task 优先级 4, 核心 1, 栈 2 KB
                 │  tone_task     │   短 tone 临时覆盖
                 │  (提示音)      │
                 └────────────────┘
 ```
 
-### 5.4 实现要点
+### 4.4 实现要点
 
 - 使用 esp-audio-player 作为高层播放 API
 - 使用 helix MP3 解码器
@@ -227,18 +227,19 @@ esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 - 异步回调通过 `xQueueSend` 投递到 `play_task` 处理
 - tone 实现：用一个临时 PCM 流任务，频率控制由正弦波生成器
 
-## 6. svc_net（网络服务）
+## 5. svc_net（网络服务）
 
-### 6.1 职责
+### 5.1 职责
 
-- WiFi 状态机（连接、断开、重连）
+- Wi-Fi 状态机（连接、断开、重连）
 - 蓝牙（BLE 主机 / 外设）
 - HTTP 客户端
 - MQTT 客户端
+- WebSocket 客户端
 - SNTP 时间同步（注册到 svc_time）
 - OTA 升级
 
-### 6.2 接口
+### 5.2 接口
 
 ```c
 typedef enum {
@@ -261,7 +262,7 @@ typedef struct {
 
 esp_err_t svc_net_init(void);
 
-/** 启动 WiFi */
+/** 启动 Wi-Fi */
 esp_err_t svc_net_wifi_start(svc_net_mode_t mode);
 esp_err_t svc_net_wifi_stop(void);
 
@@ -298,33 +299,39 @@ esp_err_t svc_mqtt_publish(const char *topic, const char *payload, int qos);
 esp_err_t svc_mqtt_subscribe(const char *topic, int qos, void (*cb)(const char *topic, const char *payload));
 esp_err_t svc_mqtt_disconnect(void);
 
+/** WebSocket */
+esp_err_t svc_ws_connect(const char *uri, void (*cb)(const char *data, size_t len));
+esp_err_t svc_ws_send(const char *data, size_t len);
+esp_err_t svc_ws_disconnect(void);
+
 /** OTA */
 esp_err_t svc_ota_check_and_update(const char *url);
 ```
 
-### 6.3 实现要点
+### 5.3 实现要点
 
-- `net_event_task` (优先级 4, 核心 0) 处理 WiFi 事件回调
-- 默认保存一份 WiFi 凭据到 NVS，自动连接
+- `net_event_task` (优先级 4, 核心 0) 处理 Wi-Fi 事件回调
+- 默认保存一份 Wi-Fi 凭据到 NVS，自动连接
 - HTTP 客户端用 `esp_http_client`
-- MQTT 用 `esp-mqtt`
+- MQTT 用 `mqtt`
+- WebSocket 用 `esp_websocket_client`
 - OTA 用 `esp_https_ota`，带 HTTPS 校验
 
-## 7. svc_storage（存储服务）
+## 6. svc_storage（存储服务）
 
-### 7.1 职责
+### 6.1 职责
 
 - 挂载 / 卸载 TF 卡 + 内置 Flash
 - 提供统一路径管理
 - 应用沙箱目录
 - 文件浏览辅助
 
-### 7.2 接口
+### 6.2 接口
 
 ```c
 esp_err_t svc_storage_init(void);
 
-esp_err_t svc_storage_get_path(hal_storage_type_t type, char *buf, size_t len);
+esp_err_t svc_storage_get_path(periph_storage_type_t type, char *buf, size_t len);
 // 填入 "/sdcard" 或 "/internal"
 
 esp_err_t svc_storage_app_dir(const char *app_name, char *buf, size_t len);
@@ -346,15 +353,15 @@ svc_storage_entry_t *svc_storage_iter_next(svc_storage_iter_t iter);
 void svc_storage_iter_end(svc_storage_iter_t iter);
 ```
 
-## 8. svc_notification（通知服务）
+## 7. svc_notification（通知服务）
 
-### 8.1 职责
+### 7.1 职责
 
 - 通知队列
 - 通知显示（通过 framework 注册）
 - 通知点击回调
 
-### 8.2 接口
+### 7.2 接口
 
 ```c
 typedef enum {
@@ -388,22 +395,22 @@ esp_err_t svc_notification_clear_all(void);
 size_t svc_notification_get_count(void);
 ```
 
-### 8.3 实现要点
+### 7.3 实现要点
 
 - 通知存储为链表 / 动态数组
 - 每次 post / dismiss 发送 `SVC_EVENT_NOTIFICATION_POSTED / DISMISSED`
 - Framework 监听这些事件并更新 UI
 
-## 9. svc_power（电源服务）
+## 8. svc_power（电源服务）
 
-### 9.1 职责
+### 8.1 职责
 
 - 背光超时熄屏
 - 触摸唤醒
-- 长假应用（预留电池检测）
+- 深度睡眠（预留）
 - 关机 / 重启请求
 
-### 9.2 接口
+### 8.2 接口
 
 ```c
 esp_err_t svc_power_init(void);
@@ -419,14 +426,14 @@ esp_err_t svc_power_request_reboot(void);
 esp_err_t svc_power_request_shutdown(void);
 ```
 
-### 9.3 实现要点
+### 8.3 实现要点
 
 - `power_task` (优先级 2, 核心 0) 每秒检查
 - 触摸事件 (`SVC_EVENT_TOUCH` 通过事件总线) 重置超时
 - 关机请求：发布 `SVC_EVENT_SHUTDOWN_REQUEST`，主循环收到后 `esp_restart()`
-- 实际无电池，所以 `shutdown` 暂用 `deep sleep` 模拟
+- 本板无电池，`shutdown` 用 `deep sleep` 模拟
 
-## 10. 服务初始化顺序
+## 9. 服务初始化顺序
 
 ```c
 esp_err_t services_init(void) {
@@ -441,7 +448,7 @@ esp_err_t services_init(void) {
 }
 ```
 
-## 11. 任务模型
+## 10. 任务模型
 
 每个服务使用一个独立 FreeRTOS 任务：
 
@@ -455,7 +462,7 @@ esp_err_t services_init(void) {
 | Network | net_event_task | 4 | 0 |
 | Power | power_task | 2 | 0 |
 
-## 12. 跨服务依赖
+## 11. 跨服务依赖
 
 - `svc_audio` → `svc_storage`（读取音频文件）
 - `svc_audio` → `svc_notification`（通知点击后播放提示音）

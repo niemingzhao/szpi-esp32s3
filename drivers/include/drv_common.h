@@ -28,7 +28,7 @@ extern "C" {
 /**
  * @brief 板级初始化 - 按正确顺序初始化所有底层外设
  *
- * 调用顺序: I2C → SPI bus → PCA9557 → LEDC backlight
+ * 调用顺序: I2C → LEDC 背光 → PCA9557 → ST7789 → FT6336 → BOOT 键 → QMI8658
  *
  * @param out_lcd_panel 输出: LCD panel handle（供 LVGL 使用）
  * @param out_lcd_io    输出: LCD panel IO handle（供 LVGL 使用）
@@ -65,7 +65,7 @@ esp_err_t drv_pca9557_set_pin(uint8_t gpio_bit, uint8_t level);
  */
 esp_err_t drv_pca9557_get_pin(uint8_t gpio_bit, uint8_t *out_level);
 
-// PCA9557 引脚定义 (与 main.c 保持一致)
+// PCA9557 引脚定义
 #define DRV_PCA9557_LCD_CS     BIT(0)
 #define DRV_PCA9557_PA_EN      BIT(1)
 #define DRV_PCA9557_DVP_PWDN   BIT(2)
@@ -85,11 +85,11 @@ esp_err_t drv_pca9557_get_pin(uint8_t gpio_bit, uint8_t *out_level);
  *
  * 依赖: bsp_init() 已调用 (I2C/SPI 总线已就绪)
  * 内部: spi_bus → panel_io → st7789_device → reset/init
+ * CS 固定由 PCA9557.BIT0 控制，不占用 GPIO。
  *
- * @param cs_gpio_by_pca9557 是否由 PCA9557 控制 CS (true=是, false=用 GPIO)
- * @return panel handle 用于后续 HAL 层
+ * @return ESP_OK 成功
  */
-esp_err_t drv_st7789_init(bool cs_gpio_by_pca9557);
+esp_err_t drv_st7789_init(void);
 esp_err_t drv_st7789_get_panel_handle(esp_lcd_panel_handle_t *out_handle);
 esp_err_t drv_st7789_get_io_handle(esp_lcd_panel_io_handle_t *out_io_handle);
 
@@ -103,7 +103,7 @@ esp_err_t drv_st7789_get_io_handle(esp_lcd_panel_io_handle_t *out_io_handle);
  * 依赖: bsp_init() 已调用
  * 内部: 创建 I2C panel_io → ft5x06 device
  *
- * @return touch handle 用于 HAL 层
+ * @return touch handle 用于 Peripherals 层
  */
 esp_err_t drv_ft6336_init(void);
 esp_err_t drv_ft6336_get_touch_handle(esp_lcd_touch_handle_t *out_handle);
@@ -115,7 +115,7 @@ esp_err_t drv_ft6336_get_touch_handle(esp_lcd_touch_handle_t *out_handle);
 /**
  * @brief 初始化 LCD 背光 LEDC
  *
- * 配置: Channel 0, Timer 0, Low Speed, 5kHz, 10-bit
+ * 配置: Channel 0, Timer 0, Low Speed, 5 kHz, 10-bit
  * GPIO42 输出，反相 (output_invert=true 因为背光电路是反相的)
  */
 esp_err_t drv_ledc_init(void);
@@ -136,8 +136,8 @@ esp_err_t drv_ledc_set_brightness(uint8_t percent);
 typedef enum {
     DRV_KEY_EVT_CLICK,          // 单击
     DRV_KEY_EVT_DOUBLE_CLICK,   // 双击
-    DRV_KEY_EVT_LONG_PRESS,     // 长按 (>1.5s)
-    DRV_KEY_EVT_VERY_LONG_PRESS, // 极长按 (>3s)
+    DRV_KEY_EVT_LONG_PRESS,     // 长按 (>1.5 s)
+    DRV_KEY_EVT_VERY_LONG_PRESS, // 极长按 (>3 s)
 } drv_key_evt_t;
 
 /**
@@ -150,7 +150,7 @@ typedef void (*drv_key_cb_t)(drv_key_evt_t evt, void *user_data);
 /**
  * @brief 初始化 BOOT 按键 (GPIO0)
  *
- * 配置: 下降沿中断，内部上拉
+ * 配置: 双沿中断（按下 / 释放），内部上拉
  * 内部创建 task 检测 debounce/双击/长按
  */
 esp_err_t drv_key_init(void);
@@ -167,7 +167,7 @@ esp_err_t drv_key_register_callback(drv_key_cb_t cb, void *user_data);
 /**
  * @brief 初始化 QMI8658 IMU
  *
- * 配置: ACC ±4g 250Hz, GYR ±512dps 250Hz
+ * 配置: ACC ±4g 250 Hz, GYR ±512 dps 250 Hz
  */
 esp_err_t drv_qmi8658_init(void);
 

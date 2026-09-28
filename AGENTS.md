@@ -1,8 +1,18 @@
 # AGENTS.md — szpi-esp32s3 (SZPI-OS)
 
-## 语言与开发约定
+## 一、语言与开发约定
 
 - **语言约定**：本项目所有文档（`README.md`、`AGENTS.md`、`docs/`、代码注释）默认使用简体中文，与 `docs/` 现有内容保持一致。
+- **文本与术语约定**：更新任一层文档或代码注释时，逐篇核对以下写法（最终以 `00-original-requirement.md`、`01-hardware-spec.md` 为准）：
+  - `I2C`（不写 `I²C`）、`I2S`、`SPI`
+  - `Wi-Fi`（不写 `WiFi`）
+  - `SPIFFS`（不写 `LittleFS`）
+  - 叙述中用 `TF 卡`（不写 `SD 卡`）
+  - 中文叙述用 `App`（`Apps 层`、`apps/` 等英文标识除外）
+  - 数字与单位之间加空格：`16 kHz`、`100 ms`、`30 FPS`
+  - 不使用 emoji，不使用 `>` 引用块
+  - 组件 / 头文件名以 ESP-IDF 实际为准（如 `bt`、`mqtt`、`vfs`、`json`，不写 `esp_bt`/`esp_mqtt`/`esp_vfs`/`cJSON`）
+  - 涉及硬件参数时与 `01-hardware-spec.md` 核对（触摸为单点等）
 - **开发约定**：AI 助手**只负责编写代码、编写文档、操作文件**。以下操作**严禁 AI 自行执行**，必须由人类开发者完成：
   - 构建项目（`idf.py build` / `idf.py set-target` 等）
   - 烧录固件到设备（`idf.py flash` / `esptool.py` 等）
@@ -27,49 +37,54 @@ szpi-esp32s3/
 ├── sdkconfig               # 自动生成，禁止手改
 ├── sdkconfig.defaults      # 策略文件，可改
 ├── main/
-│   ├── main.c              # app_main()，当前只有 v0.1 骨架
+│   ├── main.c              # app_main()，v0.3：Drivers + Peripherals 初始化 + UI
 │   ├── CMakeLists.txt
 │   └── idf_component.yml
+├── drivers/                # 芯片级驱动（已完成）
+├── peripherals/            # 外设抽象层（已完成）
+├── services/               # 业务服务层（待实现）
+├── framework/              # UI 框架层（待实现）
+├── apps/                   # 应用层（待实现）
 ├── managed_components/     # 组件管理器自动填充，按构建产物对待
 ├── docs/                   # 设计文档（需求 / 架构 / 详细设计）
 │   ├── 01-requirements/    # 原始需求、硬件规格、PRD
 │   ├── 02-architecture/    # 架构总览、分层、模块依赖
-│   └── 03-design/          # HAL / Services / UI / App 框架 / 数据流
+│   └── 03-design/          # Peripherals / Services / UI / App 框架 / 数据流
 └── build/                  # 构建产物（在 .gitignore）
 ```
 
 **关键文件说明**：
 
-- `main/main.c` —— 仅有 `app_main()` 的 v0.1 骨架：NVS → I2C0（GPIO1/2，100 kHz）→ PCA9557 @ 0x19 → LEDC 背光（GPIO42）→ ST7789 屏（SPI3_HOST：MOSI GPIO40、CLK GPIO41、80 MHz、模式 2）→ FT6336 触摸 @ 0x38 → `esp_lvgl_port`（LVGL 8.3.0）→ 一个按钮 + 标签。
+- `main/main.c` —— v0.3 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ 创建 UI（一个按钮 + 标签）。
 - `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`。
 - `dependencies.lock` —— 精确锁定版本，**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
 - `partitions.csv` —— 自定义分区表，已在用（见文件头）。**不要切换到内置分区方案**，否则必须同步修改 factory/ota 布局和文档。
 
 ---
 
-## 三、计划的 5 层架构（`docs/` 中定义，**代码尚未实现**）
+## 三、5 层架构（Drivers / Peripherals 已实现，上层规划中）
 
 调用方向（**禁止反向调用**）：
 
 ```
-Apps → Framework → Services → HAL → Drivers → ESP-IDF/FreeRTOS
+Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 ```
 
 | 目录 | 模块 | 说明 |
 |------|------|------|
-| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、`es7210`、`gc0308`、SDMMC、BOOT 按键、LEDC | 芯片级薄封装 |
-| `hal/` | `hal_lcd_*`、`hal_audio_*`、`hal_imu_*`、`hal_storage_*`、`hal_camera_*`、`hal_io_exp_*`、`hal_button_*` | 面向业务的 C API（如亮度 0-100） |
-| `services/` | `svc_event_bus`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | 跨 HAL 业务逻辑 |
-| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_statusbar`、`fw_control_center`、`fw_notification` | LVGL 封装、App 编程模型 |
-| `apps/` | `app_clock`、`app_music`、`app_settings` 等 17 个内置 app | 通过 `FW_APP_REGISTER(...)` 注册 |
+| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、BOOT 按键、LEDC、BSP | 已实现（`es8311`、`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
+| `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO 已实现；Audio 占位；Camera 未包含 |
+| `services/` | `svc_event_bus`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | 规划中（目录尚未创建） |
+| `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_statusbar`、`fw_control_center`、`fw_notification` | 规划中（目录尚未创建） |
+| `apps/` | `app_clock`、`app_music`、`app_settings` 等 17 个内置 App | 规划中（目录尚未创建） |
 
-这些目录当前**还不存在**。新建时遵守 `docs/02-architecture/01-layer-design.md`：
+`drivers/`、`peripherals/` 已实现；`services/`、`framework/`、`apps/` 目录当前**还不存在**。新建时遵守 `docs/02-architecture/01-layer-design.md`：
 
-- **命名**：`drv_<chip>_*`、`bsp_*`、`hal_<dev>_*`、`svc_<svc>_*`、`fw_<mod>_*`、`app_<name>_*`。
+- **命名**：`drv_<chip>_*`、`bsp_*`、`periph_<dev>_*`、`svc_<svc>_*`、`fw_<mod>_*`、`app_<name>_*`。
 - **返回值**：所有公开 API 返回 `esp_err_t`。
-- **日志**：禁用 `printf`，统一用 `ESP_LOGI/W/E`，TAG 带层前缀（`"drv.st7789"`、`"hal.lcd"`、`"svc.audio"`、`"fw.window"`、`"app.clock"`）。
-- **单向调用**：HAL 不能调 Services，Apps 不能调 HAL/Drivers，Services 不能调 Framework/Apps。
-- **唯一例外**：Services 回调中可以使用 `lvgl_port_lock/unlock`。
+- **日志**：禁用 `printf`，统一用 `ESP_LOGI/W/E`，TAG 带层前缀（`"drv.st7789"`、`"periph.lcd"`、`"svc.audio"`、`"fw.window"`、`"app.clock"`）。
+- **单向调用**：Peripherals 不能调 Services，Apps 不能调 Peripherals/Drivers，Services 不能调 Framework/Apps。
+- **唯一例外**：Peripherals / Services 中可以使用 `lvgl_port_lock/unlock`。
 - **任务模型**：每个 Service 通常独占一个 FreeRTOS 任务；同步 API 只用于简单 setter。
 
 ---
@@ -78,11 +93,11 @@ Apps → Framework → Services → HAL → Drivers → ESP-IDF/FreeRTOS
 
 ### 4.1 LVGL 调用必须加锁
 
-在非 LVGL 任务里（触摸 ISR、app 回调、Services）调用任何 LVGL API，**必须**用 `lvgl_port_lock(0)` / `lvgl_port_unlock()` 包起来。骨架代码里的按钮回调和 `create_ui` 已经是范式，照抄。
+在非 LVGL 任务里（触摸扫描任务、App 回调、Services）调用任何 LVGL API，**必须**用 `lvgl_port_lock(0)` / `lvgl_port_unlock()` 包起来。骨架代码里的按钮回调和 `create_ui` 已经是范式，照抄。
 
 ### 4.2 LVGL framebuffer 必须放 PSRAM
 
-`lvgl_port_display_cfg_t.flags.buff_spiram = true`（骨架已设）。`sdkconfig.defaults` 里 `CONFIG_LV_MEM_CUSTOM=y`、`CONFIG_LV_USE_PNG=n`、`CONFIG_LV_USE_GIF=n` 是有意的：PNG/GIF 解码器会让 flash 体积明显膨胀，改回前必须先评估预算。
+`lvgl_port_display_cfg_t.flags.buff_spiram = true`（骨架已设）。`CONFIG_LV_MEM_CUSTOM=y`、`CONFIG_LV_USE_PNG=y`、`CONFIG_LV_USE_GIF=y`（目标配置见 `docs/01-requirements/01-hardware-spec.md`）：PNG/GIF 解码器会明显增大固件体积，调整前先评估 flash 预算。
 
 ### 4.3 `CONFIG_LV_COLOR_16_SWAP=y` 与 ST7789 RGB element order 配套
 
@@ -92,14 +107,18 @@ Apps → Framework → Services → HAL → Drivers → ESP-IDF/FreeRTOS
 
 | 信号 | 实际位置 |
 |------|----------|
-| LCD CS | **PCA9557.BIT0**（不是 GPIO）—— `esp_lcd_panel_init` 前要 `pca9557_set_output(LCD_CS_GPIO, 0)` 拉低 |
+| LCD CS | **PCA9557.BIT0**（不是 GPIO）—— `esp_lcd_panel_init` 前要 `drv_pca9557_set_pin(DRV_PCA9557_LCD_CS, 0)` 拉低 |
 | 音频 PA_EN | PCA9557.BIT1 |
 | 摄像头 PWDN | PCA9557.BIT2 |
 | LCD RST | **NC**（靠 `esp_lcd_panel_reset()` 软件复位） |
 | 触摸 INT | **NC**（轮询模式） |
 | 触摸 RST | **NC** |
 
-完整引脚/I2C 表见 `docs/01-requirements/01-hardware-spec.md`（如与 `main.c` 注释冲突，以此为准）。
+完整引脚/I2C 表以 `docs/01-requirements/01-hardware-spec.md` 为准。
+
+- 触摸为单点（FT6336），不支持多指手势。
+- GPIO33~37 被八线 PSRAM 占用，不可用；GPIO26~32 为模组内 Flash/PSRAM，未引出。
+- UART0（GPIO43/44）接 CH340K，用于下载与串口调试。
 
 ### 4.5 配置文件的修改边界
 
@@ -118,7 +137,7 @@ Apps → Framework → Services → HAL → Drivers → ESP-IDF/FreeRTOS
 
 ### 4.8 FATFS 三项必须同时保留
 
-`storage` 分区上 `CONFIG_FATFS_LFN_HEAP=y`、`CONFIG_FATFS_CODEPAGE_936=y`、`CONFIG_FATFS_API_ENCODING_UTF_8=y` 三项必须一起保留，否则 SD 上的非 ASCII 长文件名会乱码。
+`storage` 分区上 `CONFIG_FATFS_LFN_HEAP=y`、`CONFIG_FATFS_CODEPAGE_936=y`、`CONFIG_FATFS_API_ENCODING_UTF_8=y` 三项必须一起保留，否则 TF 卡上的非 ASCII 长文件名会乱码。
 
 ---
 
@@ -135,7 +154,7 @@ Apps → Framework → Services → HAL → Drivers → ESP-IDF/FreeRTOS
 |------|------|------|------|
 | `nvs` | 0x9000 | 24 KB | NVS |
 | `phy_init` | 0xf000 | 4 KB | PHY 校准 |
-| `factory` | — | 4 MB | app |
+| `factory` | — | 4 MB | App |
 | `ota_0` | — | 4 MB | OTA |
 | `ota_1` | — | 4 MB | OTA 备份 |
 | `storage` | — | 3 MB | SPIFFS |
@@ -189,30 +208,33 @@ idf.py size-files
 
 ```
 1. nvs_flash_init()
-2. bsp_init()                 → I2C, SPI, LEDC, PCA9557
-3. hal_init_all()             → LCD, Touch, Audio, IMU, Storage, Camera, Button, IO
-                                └─ lvgl_port_init() + lvgl_port_add_disp()
+2. bsp_init()                 → I2C, SPI, LEDC, PCA9557, LCD, Touch, Key, IMU
+3. peripherals_init_all()     → IO, Audio, LCD(+LVGL display), Touch, IMU, Storage, Button
+                                 └─ periph_lcd_init() 内 lvgl_port_init() + lvgl_port_add_disp()
+                                    periph_touch_init() 注册 LVGL input device
+
+（以下为规划中，services / framework / apps 尚未实现）
 4. services_init()            → EventBus, Storage, Time, Audio, Net, Power, Noti
 5. fw_init()                  → Theme, Asset, Window, Input, StatusBar, CtrlCenter, NotiCenter, AppMgr
-6. app_register_all()         → 注册所有内置 app
-7. fw_boot_animation()        → Logo 动画 1.5s
+6. app_register_all()         → 注册所有内置 App
+7. fw_boot_animation()        → Logo 动画 1.5 s
 8. fw_app_mgr_launch("Home")  → 显示桌面
 ```
 
-时间预算（目标到首屏 < 2.5s）见 `docs/03-design/04-data-flow.md`。
+时间预算（目标到首屏 < 2.5 s）见 `docs/03-design/04-data-flow.md`。
 
 ---
 
 ## 八、典型数据流
 
 ### 触摸事件
-drv_ft6336_read → hal_touch 任务扫描 → lvgl_port_touch_cb → LVGL input device 派发 → app 处理
+drv_ft6336 → periph_touch 扫描任务（缓存 + 手势识别）→ LVGL indev read_cb 读缓存 → LVGL input device 派发 → App 处理
 
 ### 音频播放
-app 调用 `svc_audio_play(path)` → svc_audio 任务 → svc_storage 读文件 → helix MP3 解码 → I2S DMA → ES8311 → NS4150B 功放 → 喇叭
+App 调用 `svc_audio_play(path)` → svc_audio 任务 → svc_storage 读文件 → helix MP3 解码 → I2S DMA → ES8311 → NS4150B 功放 → 喇叭
 
 ### 配置持久化
-app 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC_EVENT_*_CHANGED` → `fw_app_mgr_broadcast` → 关心此 key 的 app 刷新 UI
+App 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC_EVENT_*_CHANGED` → `fw_app_mgr_broadcast` → 关心此 key 的 App 刷新 UI
 
 详细见 `docs/03-design/04-data-flow.md`。
 

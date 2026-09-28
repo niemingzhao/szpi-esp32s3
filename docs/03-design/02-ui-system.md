@@ -6,16 +6,16 @@ UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封�
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              LVGL Display 320x240                         │
+│              LVGL Display 320×240                         │
 ├──────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────┐ │
-│  │           Status Bar (24px)         │ │  ← fw_statusbar                       │
+│  │           Status Bar (24 px)         │ │  ← fw_statusbar                       │
 │  ├─────────────────────────────────────────────────┤ │
 │  │                                                 │ │
-│  │       App Window                                 │ │  ← 当前 app
+│  │       App Window                                 │ │  ← 当前 App
 │  │                                                 │ │
 │  ├─────────────────────────────────────────────────┤ │
-│  │     虚拟按键栏 (BACK / HOME, 24-32px)        │ │  ← fw_input
+│  │     虚拟按键栏 (BACK / HOME, 24-32 px)        │ │  ← fw_input
 │  └─────────────────────────────────────────────────┘ │
 │                                                          │
 │  Overlay Layers:                                         │
@@ -32,9 +32,9 @@ UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封�
 
 ```
 ┌────────────────────────────────────────────────────┐
-│  10:30       [WiFi] [♪]                        ●● │
+│  10:30       [Wi-Fi] [♪]                            │
 └────────────────────────────────────────────────────┘
-   左：时间                中：图标           右：状态点
+   左：时间                中：图标
 ```
 
 ### 2.2 接口
@@ -43,7 +43,6 @@ UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封�
 esp_err_t fw_statusbar_init(void);
 esp_err_t fw_statusbar_set_time(const char *time);     // "10:30"
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);
-esp_err_t fw_statusbar_set_battery(uint8_t percent);
 esp_err_t fw_statusbar_set_music_playing(bool on);
 esp_err_t fw_statusbar_set_bluetooth(bool on);
 ```
@@ -51,7 +50,7 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 ### 2.3 实现要点
 
 - 订阅 `SVC_EVENT_TIME_CHANGED` 更新时间
-- 订阅 `SVC_EVENT_WIFI_*` 更新 WiFi 图标
+- 订阅 `SVC_EVENT_WIFI_*` 更新 Wi-Fi 图标
 - 订阅 `SVC_EVENT_AUDIO_*` 更新播放图标
 - 订阅 `SVC_EVENT_BRIGHTNESS_CHANGED` 更新亮度
 
@@ -62,7 +61,7 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 ```
 ┌────────────────────────────────────────────────────┐
 │ ┌──────────────┐  ┌──────────────┐ ┌──────────────┐│
-│ │   WiFi       │  │  Bluetooth   │ │  Brightness  ││
+│ │   Wi-Fi       │  │  Bluetooth   │ │  Brightness  ││
 │ │   ●  ON      │  │   ○  OFF     │ │ ━━━━○─────   ││
 │ └──────────────┘  └──────────────┘ └──────────────┘│
 │ ┌──────────────┐  ┌──────────────┐ ┌──────────────┐│
@@ -82,10 +81,10 @@ esp_err_t fw_control_center_hide(void);
 
 ### 3.3 实现要点
 
-- 默认隐藏，三指下滑或特定手势打开
+- 默认隐藏，底部上滑或特定手势打开
 - 滑块亮度调用 `svc_settings_set(BRIGHTNESS)`
 - 滑块音量调用 `svc_audio_set_volume()`
-- WiFi / Bluetooth 开关调用 `svc_net_*`
+- Wi-Fi / Bluetooth 开关调用 `svc_net_*`
 
 ## 4. fw_notification（通知中心）
 
@@ -96,13 +95,13 @@ esp_err_t fw_control_center_hide(void);
 │ 通知中心                                       清空 │
 ├────────────────────────────────────────────────────┤
 │ ⓘ  系统                                10:30       │
-│    WiFi 已连接到 XXX                              │
+│    Wi-Fi 已连接到 XXX                              │
 ├────────────────────────────────────────────────────┤
 │ ⓘ  音乐播放器                            09:15     │
 │    正在播放：Canon                                  │
 ├────────────────────────────────────────────────────┤
 │ ⚠  设置                                  昨天      │
-│    电量低于 20%                                    │
+│    存储空间不足                                    │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -150,13 +149,9 @@ esp_err_t fw_notification_clear(uint32_t id);
 ### 5.2 字体
 
 ```c
-LV_FONT_DECLARE(font_alipuhui20);   // 中文 20px
-LV_FONT_DECLARE(font_alipuhui16);   // 中文 16px
+LV_FONT_DECLARE(font_alipuhui20);   // 中文 20 px
 
 // LVGL 内置
-//   lv_font_montserrat_12
-//   lv_font_montserrat_14
-//   lv_font_montserrat_16
 //   lv_font_montserrat_20
 //   lv_font_montserrat_24
 //   lv_font_montserrat_32
@@ -197,8 +192,8 @@ lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms);
 
 ### 7.1 字体来源
 
-- 英文：LVGL 内置 Montserrat 12/14/16/20/24/32
-- 中文：阿里巴巴普惠体（已用于 14-handheld）
+- 英文：LVGL 内置 Montserrat 20/24/32
+- 中文：阿里巴巴普惠体
 - 中文字体子集化：通过 LVGL font converter 生成
 
 ### 7.2 图标来源
@@ -206,13 +201,13 @@ lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms);
 - 优先 LVGL 内置 symbol（`LV_SYMBOL_PLAY / PAUSE` 等）
 - 自定义图标：使用 LVGL image converter 从 PNG 生成 C 数组
 
-### 7.3 图标清单（16 个 app）
+### 7.3 图标清单（17 个 App）
 
-每个 app 一个 64×64 图标，作为 C 数组编译进固件。
+每个 App 一个 64×64 图标，作为 C 数组编译进固件。
 
 ## 8. 桌面
 
-桌面是"Home"这个特殊 app：
+桌面是"Home"这个特殊 App：
 
 ```c
 // apps/app_home/app_home.c
@@ -227,7 +222,7 @@ FW_APP_REGISTER(
 桌面包含：
 - 顶部状态栏（fw_statusbar 嵌入）
 - 天气小组件（可选）
-- 应用网格（4×2 = 8 个图标，从 fw_app_mgr_list 获取）
+- 应用网格（4×2 分页，从 fw_app_mgr_list 获取，共 17 个 App）
 - 底部虚拟按键栏
 
 ## 9. 启动动画
@@ -235,9 +230,9 @@ FW_APP_REGISTER(
 ```
 开机:
   1. 全屏黑屏
-  2. SZPI-OS Logo 缩放淡入 (300ms)
-  3. Logo 旋转一圈 (500ms)
-  4. 缩放淡出 (300ms)
+  2. SZPI-OS Logo 缩放淡入 (300 ms)
+  3. Logo 旋转一圈 (500 ms)
+  4. 缩放淡出 (300 ms)
   5. 进入桌面
 ```
 
@@ -250,21 +245,24 @@ FW_APP_REGISTER(
 | 单击 | 触发对应按钮 / 图标 |
 | 双击 | 桌面 / 关闭对话框 |
 | 长按 | 弹出菜单 / 删除 |
-| 滑动（左 / 右） | 切换 app / 关闭对话框 |
-| 下滑 | 打开控制中心 |
-| 上滑 | 关闭控制中心 |
+| 滑动（左 / 右） | 切换 App / 关闭对话框 |
+| 顶部下滑 | 打开通知中心 |
+| 底部上滑 | 打开控制中心 |
 
 ## 11. LVGL 集成要点
 
 ### 11.1 Port 配置
 
+LVGL port 与 display 由 `periph_lcd_init()` 负责；touch 的 input device 由 `periph_touch_init()` 注册：
+
 ```c
+/* periph_lcd_init() 内 */
 const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
 lvgl_port_init(&lvgl_cfg);
 
 const lvgl_port_display_cfg_t disp_cfg = {
-    .io_handle = io_handle,        // 来自 hal_lcd_get_disp
-    .panel_handle = panel_handle,
+    .io_handle = io_handle,        // 来自 drv_st7789_get_io_handle()
+    .panel_handle = panel_handle,  // 来自 drv_st7789_get_panel_handle()
     .buffer_size = 320 * 20,       // 20 行高
     .double_buffer = false,
     .hres = 320,
@@ -280,16 +278,20 @@ const lvgl_port_display_cfg_t disp_cfg = {
         .buff_spiram = true,        // 帧缓冲强制 PSRAM
     }
 };
-
 lv_disp_t *disp = lvgl_port_add_disp(&disp_cfg);
-
-const lvgl_port_touch_cfg_t touch_cfg = {
-    .disp = disp,
-    .handle = tp,                  // 来自 hal_touch
-};
-
-lv_indev_t *indev = lvgl_port_add_touch(&touch_cfg);
 ```
+
+```c
+/* periph_touch_init() 内：注册只读缓存的 POINTER input device */
+lv_indev_drv_t indev_drv;
+lv_indev_drv_init(&indev_drv);
+indev_drv.type = LV_INDEV_TYPE_POINTER;
+indev_drv.read_cb = touch_indev_read_cb;   // 读取 periph_touch 缓存的坐标
+indev_drv.disp = periph_lcd_get_disp();
+lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
+```
+
+不使用 `lvgl_port_add_touch()`：触摸设备的轮询由 `periph_touch` 的扫描任务独占，以避免 LVGL 与手势任务并发读取同一 `esp_lcd_touch` 句柄造成丢点。
 
 ### 11.2 线程安全
 
@@ -304,9 +306,9 @@ lv_indev_t *indev = lvgl_port_add_touch(&touch_cfg);
 | 手势 | 默认路由 |
 |------|----------|
 | 右边缘左滑 | 全局 → fw_app_mgr_back() |
-| 三指下滑 | 全局 → 打开控制中心 |
-| 单指下滑 | 全局 → 打开通知中心 |
-| 触摸屏幕中央 | 当前 app（经 LVGL input device） |
+| 顶部下滑 | 全局 → 打开通知中心 |
+| 底部上滑 | 全局 → 打开控制中心 |
+| 触摸屏幕中央 | 当前 App（经 LVGL input device） |
 
 ### 12.2 按键路由
 
@@ -318,7 +320,7 @@ lv_indev_t *indev = lvgl_port_add_touch(&touch_cfg);
 
 ## 13. 过渡动画
 
-应用切换时使用 200-300ms 淡入淡出动画：
+应用切换时使用 200-300 ms 淡入淡出动画：
 
 ```c
 lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, NULL);
