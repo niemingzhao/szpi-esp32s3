@@ -18,6 +18,7 @@
 #include "esp_lvgl_port.h"
 #include "drv_common.h"
 #include "periph_common.h"
+#include "svc_common.h"
 #include "lvgl.h"
 
 static const char *TAG = "szpi-os";
@@ -95,11 +96,14 @@ void app_main(void)
     // 3. Peripherals 层初始化（含 LVGL display 与触摸 input device）
     ESP_ERROR_CHECK(peripherals_init_all());
 
-    // 4. 创建 UI（背光已由 periph_lcd_init 按 NVS 亮度和默认值打开）
+    // 4. Services 层初始化
+    ESP_ERROR_CHECK(services_init());
+
+    // 5. 创建 UI（背光已由 periph_lcd_init 按 NVS 亮度和默认值打开）
     create_ui();
     ESP_LOGI(TAG, "UI created");
 
-    // 5. 挂载内置 Flash 文件系统（首次自动格式化；放在 UI 之后避免阻塞首屏）
+    // 6. 挂载内置 Flash 文件系统（首次自动格式化；放在 UI 之后避免阻塞首屏）
     if (periph_storage_mount(PERIPH_STORAGE_INTERNAL_FLASH) != ESP_OK) {
         ESP_LOGW(TAG, "internal storage mount failed");
     }

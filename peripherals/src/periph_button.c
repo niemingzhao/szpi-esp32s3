@@ -32,7 +32,9 @@ static void key_evt_wrapper(drv_key_evt_t evt, void *user)
 esp_err_t periph_button_init(void)
 {
     ESP_ERROR_CHECK(drv_key_init());
-    return drv_key_register_callback(key_evt_wrapper, NULL);
+    esp_err_t err = drv_key_register_callback(key_evt_wrapper, NULL);
+    if (err == ESP_OK) ESP_LOGI(TAG, "initialized");
+    return err;
 }
 
 esp_err_t periph_button_register_callback(periph_button_cb_t cb, void *user)

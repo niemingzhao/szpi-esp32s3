@@ -42,7 +42,7 @@ szpi-esp32s3/
 │   └── idf_component.yml
 ├── drivers/                # 芯片级驱动（已完成）
 ├── peripherals/            # 外设抽象层（已完成）
-├── services/               # 业务服务层（待实现）
+├── services/               # 业务服务层（骨架 + 基础服务）
 ├── framework/              # UI 框架层（待实现）
 ├── apps/                   # 应用层（待实现）
 ├── managed_components/     # 组件管理器自动填充，按构建产物对待
@@ -55,14 +55,14 @@ szpi-esp32s3/
 
 **关键文件说明**：
 
-- `main/main.c` —— v0.3 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ 创建 UI（一个按钮 + 标签）。
+- `main/main.c` —— v0.3 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ `services_init()`（EventBus / Settings / Storage / Time / Audio / Net / Power / Notification）→ 创建 UI（一个按钮 + 标签）。
 - `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`。
 - `dependencies.lock` —— 精确锁定版本，**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
 - `partitions.csv` —— 自定义分区表，已在用（见文件头）。**不要切换到内置分区方案**，否则必须同步修改 factory/ota 布局和文档。
 
 ---
 
-## 三、5 层架构（Drivers / Peripherals 已实现，上层规划中）
+## 三、5 层架构（Drivers / Peripherals / Services 已建立，Framework / Apps 规划中）
 
 调用方向（**禁止反向调用**）：
 
@@ -74,11 +74,11 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 |------|------|------|
 | `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、BOOT 按键、LEDC、BSP | 已实现（`es8311`、`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
 | `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO 已实现；Audio 占位；Camera 未包含 |
-| `services/` | `svc_event_bus`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | 规划中（目录尚未创建） |
+| `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | 骨架 + 基础服务：event_bus / settings / storage / time / power / notification 已实现；audio / net 为骨架 |
 | `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_statusbar`、`fw_control_center`、`fw_notification` | 规划中（目录尚未创建） |
 | `apps/` | `app_clock`、`app_music`、`app_settings` 等 17 个内置 App | 规划中（目录尚未创建） |
 
-`drivers/`、`peripherals/` 已实现；`services/`、`framework/`、`apps/` 目录当前**还不存在**。新建时遵守 `docs/02-architecture/01-layer-design.md`：
+`drivers/`、`peripherals/` 已实现；`services/` 已建立（audio/net 为骨架）；`framework/`、`apps/` 目录当前**还不存在**。新建时遵守 `docs/02-architecture/01-layer-design.md`：
 
 - **命名**：`drv_<chip>_*`、`bsp_*`、`periph_<dev>_*`、`svc_<svc>_*`、`fw_<mod>_*`、`app_<name>_*`。
 - **返回值**：所有公开 API 返回 `esp_err_t`。
@@ -213,7 +213,7 @@ idf.py size-files
                                  └─ periph_lcd_init() 内 lvgl_port_init() + lvgl_port_add_disp()
                                     periph_touch_init() 注册 LVGL input device
 
-（以下为规划中，services / framework / apps 尚未实现）
+（services 已实现；以下 framework / apps 规划中）
 4. services_init()            → EventBus, Storage, Time, Audio, Net, Power, Noti
 5. fw_init()                  → Theme, Asset, Window, Input, StatusBar, CtrlCenter, NotiCenter, AppMgr
 6. app_register_all()         → 注册所有内置 App

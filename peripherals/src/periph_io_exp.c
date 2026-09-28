@@ -12,7 +12,9 @@ static const char *TAG = "periph.io_exp";
 
 esp_err_t periph_io_exp_init(void)
 {
-    return drv_pca9557_init();
+    esp_err_t err = drv_pca9557_init();
+    if (err == ESP_OK) ESP_LOGI(TAG, "initialized");
+    return err;
 }
 
 esp_err_t periph_io_exp_set(periph_io_pin_t pin, periph_io_level_t level)
