@@ -1,7 +1,7 @@
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES peripherals nvs_flash esp_netif esp_wifi esp_event esp_http_client esp_http_server esp_timer freertos chmorgan__esp-libhelix-mp3 esp_https_ota mbedtls mqtt esp_websocket_client esp_hw_support heap esp_system console esp_app_format bt
+    REQUIRES peripherals nvs_flash esp_netif esp_wifi esp_event esp_http_client esp_http_server esp_timer freertos chmorgan__esp-libhelix-mp3 esp_https_ota mbedtls mqtt esp_websocket_client esp_hw_support heap esp_system console esp_app_format bt spi_flash
     PRIV_REQUIRES drivers
 )
 

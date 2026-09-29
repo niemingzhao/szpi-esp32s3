@@ -305,6 +305,11 @@ void drv_gc0308_return_frame(camera_fb_t *frame);
 esp_err_t drv_gc0308_set_framesize(framesize_t size);
 
 /**
+ * @brief 切换像素格式（RGB565 预览 / JPEG 拍照用）
+ */
+esp_err_t drv_gc0308_set_pixformat(pixformat_t format);
+
+/**
  * @brief 反初始化并给摄像头掉电
  */
 esp_err_t drv_gc0308_deinit(void);

@@ -209,6 +209,7 @@ lv_color_t fw_theme_color_accent(void);
 | Toast | 短提示（3 秒自动消失） |
 | 列表 | 设置项 / 文件浏览 |
 | 网格 | 应用图标 / 图片缩略图 |
+| 页面 / 整行入口 / 滑块行 | `fw_ui_page()` / `fw_ui_row_btn()` / `fw_ui_slider_row()`，App 页面的标准骨架（规格见 14.1） |
 
 每个组件提供统一 API：
 

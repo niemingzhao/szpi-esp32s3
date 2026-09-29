@@ -472,7 +472,7 @@ static void build_display(lv_obj_t *page)
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t *bl = caption(head, "亮度");
+    caption(head, "亮度");
     s_bright_value = lv_label_create(head);
     lv_label_set_text_fmt(s_bright_value, "%u%%", (unsigned)svc_power_get_brightness());
     lv_obj_set_style_text_font(s_bright_value, fw_asset_font_cn(), 0);

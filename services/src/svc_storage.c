@@ -14,6 +14,7 @@
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -149,4 +150,89 @@ void svc_storage_iter_end(svc_storage_iter_t iter)
     if (ctx == NULL) return;
     if (ctx->dir) closedir(ctx->dir);
     free(ctx);
+}
+
+esp_err_t svc_storage_get_info(periph_storage_type_t type, periph_storage_info_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    return periph_storage_get_info(type, out);
+}
+
+esp_err_t svc_storage_format(periph_storage_type_t type)
+{
+    ESP_LOGW(TAG, "formatting storage %d", (int)type);
+    return periph_storage_format(type);
+}
+
+esp_err_t svc_storage_read(const char *path, void **out_buf, size_t *out_len)
+{
+    if (path == NULL || out_buf == NULL || out_len == NULL) return ESP_ERR_INVALID_ARG;
+
+    *out_buf = NULL;
+    *out_len = 0;
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return ESP_ERR_NOT_FOUND;
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return ESP_FAIL;
+    }
+    long size = ftell(f);
+    if (size <= 0 || size > SVC_STORAGE_READ_MAX) {
+        fclose(f);
+        return (size == 0) ? ESP_ERR_INVALID_SIZE : ESP_ERR_INVALID_SIZE;
+    }
+    rewind(f);
+
+    char *buf = malloc((size_t)size + 1);
+    if (buf == NULL) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t n = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    if (n != (size_t)size) {
+        free(buf);
+        return ESP_FAIL;
+    }
+
+    buf[size] = '\0';    /* 读文本时省事；二进制长度以 *out_len 为准 */
+    *out_buf = buf;
+    *out_len = (size_t)size;
+    return ESP_OK;
+}
+
+esp_err_t svc_storage_write(const char *path, const void *data, size_t len)
+{
+    if (path == NULL || data == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) return ESP_FAIL;
+
+    size_t n = fwrite(data, 1, len, f);
+    if (fclose(f) != 0 || n != len) return ESP_FAIL;
+
+    ESP_LOGD(TAG, "wrote %u byte(s) to %s", (unsigned)len, path);
+    return ESP_OK;
+}
+
+esp_err_t svc_storage_remove(const char *path)
+{
+    if (path == NULL) return ESP_ERR_INVALID_ARG;
+
+    return (remove(path) == 0) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t svc_storage_exists(const char *path, size_t *out_size)
+{
+    if (path == NULL) return ESP_ERR_INVALID_ARG;
+
+    struct stat st;
+    if (stat(path, &st) != 0) return ESP_ERR_NOT_FOUND;
+    if (S_ISDIR(st.st_mode)) return ESP_ERR_INVALID_ARG;
+
+    if (out_size != NULL) *out_size = (size_t)st.st_size;
+    return ESP_OK;
 }

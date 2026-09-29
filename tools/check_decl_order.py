@@ -21,6 +21,8 @@ SKIP_DIRS = ('managed_components', 'build', '.git', 'tools', 'docs')
 
 FUNC_DEF = re.compile(r'(?m)^static\s+[A-Za-z_][\w \*]*?\s+([a-z_][a-z0-9_]*)\s*\([^;]*\)\s*$')
 VAR_DEF = re.compile(r'(?m)^static\s+[A-Za-z_][\w \*]*?\s+([a-z_][a-z0-9_]*)\s*(?:=|;)')
+# 前置声明：static 函数原型（以 ; 结尾）单独一行，允许出现在使用之前
+FUNC_DECL = re.compile(r'(?m)^static\s+[A-Za-z_][\w \*]*?\s+([a-z_][a-z0-9_]*)\s*\([^;]*\)\s*;\s*$')
 
 
 def is_comment_line(ln):
@@ -42,10 +44,14 @@ def main():
                     lines = fh.read().splitlines()
 
                 defs = {}
+                decls = {}
                 for i, ln in enumerate(lines):
                     m = FUNC_DEF.match(ln) or VAR_DEF.match(ln)
                     if m:
                         defs.setdefault(m.group(1), i)
+                    d = FUNC_DECL.match(ln)
+                    if d:
+                        decls.setdefault(d.group(1), i)
 
                 for name, def_line in defs.items():
                     pat = re.compile(r'(?<![a-zA-Z_])' + re.escape(name) + r'\b')
@@ -55,6 +61,9 @@ def main():
                             continue
                         # 前置声明（以 ; 结尾且不是定义）是允许的
                         if ln.rstrip().endswith(';') and '(' in ln:
+                            continue
+                        # 文件里在本行之前有 static 原型，也允许（多行调用会导致上面的启发式失效）
+                        if name in decls and decls[name] < i:
                             continue
                         findings.append((os.path.relpath(p, ROOT).replace('\\', '/'), i + 1, def_line + 1, name))
                         break

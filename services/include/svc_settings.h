@@ -39,6 +39,13 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
 esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len);
 esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len);
 
+/**
+ * @brief 恢复出厂设置：擦除整个 NVS 分区（含 Wi-Fi 凭据、主题、音量等全部配置）
+ *
+ * 调用后应立刻重启（其它服务持有的 NVS 句柄已失效）。危险操作，界面要二次确认。
+ */
+esp_err_t svc_settings_factory_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

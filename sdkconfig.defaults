@@ -20,7 +20,12 @@ CONFIG_BT_ENABLED=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
+# 通用 malloc 一律优先 PSRAM（0 = 全部优先外部 RAM）。
+# 原因：LVGL 的控件对象（每个几百字节）走的是普通 malloc，18 个 App 的桌面会吃掉近 20 KB
+# 内部 RAM，再叠加 App 的静态数组，Wi-Fi 算 WPA PSK 时就分配不出一个互斥量（lock_init_generic
+# abort）。注意：FreeRTOS 对象 / 任务栈 / DMA 缓冲走 heap_caps_malloc(INTERNAL)，
+# 不受这个阈值影响（BLE 的队列与栈仍然在内部 RAM）。
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
 # 给"只能用内部内存"的分配（DMA / FreeRTOS 对象 / BLE 控制器）预留的内部 RAM。
@@ -53,6 +58,8 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_USE_PNG=y
 CONFIG_LV_USE_GIF=y
+# BMP 解码：图片 App 显示 TF 卡里的 .bmp；相机拍照时用它写小尺寸缩略图（我们自己写 BMP 头）
+CONFIG_LV_USE_BMP=y
 
 # SPIFFS：长文件名（与硬件规格一致，改后首次挂载会重新格式化存储分区）
 CONFIG_SPIFFS_OBJ_NAME_LEN=128

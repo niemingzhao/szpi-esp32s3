@@ -122,6 +122,16 @@ esp_err_t drv_gc0308_set_framesize(framesize_t size)
     return (s->set_framesize(s, size) == 0) ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t drv_gc0308_set_pixformat(pixformat_t format)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+
+    sensor_t *s = esp_camera_sensor_get();
+    if (s == NULL || s->set_pixformat == NULL) return ESP_FAIL;
+
+    return (s->set_pixformat(s, format) == 0) ? ESP_OK : ESP_FAIL;
+}
+
 esp_err_t drv_gc0308_deinit(void)
 {
     if (!s_initialized) return ESP_OK;

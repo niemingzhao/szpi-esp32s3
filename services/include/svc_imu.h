@@ -31,6 +31,11 @@ bool svc_imu_is_moving(void);
  */
 periph_imu_orientation_t svc_imu_get_orientation(void);
 
+/**
+ * @brief 读一次原始数据（加速度 / 角速度 / 欧拉角，供姿态 App 显示）
+ */
+esp_err_t svc_imu_read(periph_imu_data_t *out);
+
 #ifdef __cplusplus
 }
 #endif

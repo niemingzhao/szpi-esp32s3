@@ -60,3 +60,10 @@ esp_err_t periph_camera_set_framesize(framesize_t size)
 
     return drv_gc0308_set_framesize(size);
 }
+
+esp_err_t periph_camera_set_pixformat(pixformat_t format)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+
+    return drv_gc0308_set_pixformat(format);
+}

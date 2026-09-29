@@ -26,6 +26,7 @@
 #include "svc_watchdog.h"
 #include "svc_bt.h"
 #include "svc_bt_hid.h"
+#include "svc_camera.h"
 
 #ifdef __cplusplus
 extern "C" {

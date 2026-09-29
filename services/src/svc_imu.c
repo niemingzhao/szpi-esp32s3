@@ -83,3 +83,9 @@ periph_imu_orientation_t svc_imu_get_orientation(void)
 {
     return periph_imu_get_orientation();
 }
+
+esp_err_t svc_imu_read(periph_imu_data_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    return periph_imu_read(out);
+}

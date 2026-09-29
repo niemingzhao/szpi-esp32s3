@@ -563,9 +563,8 @@ static void bt_selftest_cb(void *arg)
     ESP_LOGI(TAG, "selftest: state=%s adv(ready=%d active=%d) scan_ready=%d gap_events=%u last=%u",
              svc_bt_state_name(d.state), (int)d.adv_ready, (int)d.adv_active,
              (int)d.scan_ready, (unsigned)d.gap_events, (unsigned)d.gap_last);
-    ESP_LOGI(TAG, "selftest: dma-internal heap free=%u largest=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+    ESP_LOGI(TAG, "selftest: dma-internal heap free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
 }
 
 esp_err_t svc_bt_init(void)
@@ -573,12 +572,10 @@ esp_err_t svc_bt_init(void)
     if (s_inited) return ESP_OK;
 
     /* 现场诊断：控制器要一块约 30 KB 的连续内部 DMA 内存，主机要内部 RAM 起任务/队列。
-     * largest 比 free 更关键 —— free 够但 largest 不够时同样会 Malloc failed。
-     * 用 MALLOC_CAP_DMA（= 内部 DMA 可用区）而不是 MALLOC_CAP_INTERNAL：后者把 IRAM 也算进去，
-     * largest 会得出比 free 还大的怪值。 */
-    ESP_LOGI(TAG, "init: dma-internal heap free=%u largest=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+     * 只报 free：largest 在带 PSRAM 的构建里不可靠（MALLOC_CAP_* 与 IRAM 混在一起会给出
+     * 大于 free 的怪值），要看最大连续块用串口 sysinfo / svc_sysinfo_get()。 */
+    ESP_LOGI(TAG, "init: dma-internal heap free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
 
     if (s_mux == NULL) {
         s_mux = xSemaphoreCreateMutex();
@@ -657,9 +654,8 @@ esp_err_t svc_bt_init(void)
      * 由该处理里的 bt_adv_sync() 补上。 */
     bt_adv_sync();
 
-    ESP_LOGI(TAG, "init done: dma-internal heap free=%u largest=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+    ESP_LOGI(TAG, "init done: dma-internal heap free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
 
     /* 启动自检定时器（只创建一次，之后每轮 init 重新计时） */
     if (s_selftest_timer == NULL) {

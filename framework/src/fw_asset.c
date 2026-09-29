@@ -9,6 +9,8 @@
 
 #include "fw_common.h"
 #include "esp_log.h"
+#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 LV_FONT_DECLARE(font_cn14);
@@ -97,8 +99,103 @@ const char *fw_asset_symbol_for(const char *app_name)
     return LV_SYMBOL_FILE;
 }
 
+/* ------------------------- LVGL 文件系统驱动（'A' 盘） -------------------------
+ *
+ * LVGL 的图片解码（PNG / GIF / BMP）需要自己按路径读文件，而 LVGL 读文件必须有一个
+ * 已注册的 lv_fs_drv。驱动只能注册到 LVGL（Framework 层持有），所以放在 fw_asset 里；
+ * 路径最终由 POSIX 文件 API 走 VFS（/sdcard 或 /internal）。
+ *
+ * App 侧统一用 fw_asset_fs_path() 把绝对路径转成 LVGL 路径（"A:/sdcard/a.png"）。
+ */
+
+#define FW_ASSET_FS_LETTER   'A'
+
+static lv_fs_drv_t s_fs_drv;
+static bool s_fs_registered = false;
+
+/* LVGL 传进来的路径可能带盘符，统一去掉 "A:" 前缀 */
+static const char *fs_vfs_path(const char *path)
+{
+    if (path != NULL && path[0] != '\0' && path[1] == ':') {
+        return path + 2;
+    }
+    return path;
+}
+
+static void *fs_open_cb(lv_fs_drv_t *drv, const char *path, lv_fs_mode_t mode)
+{
+    (void)drv;
+    if (mode != LV_FS_MODE_RD) return NULL;   /* 只读：写文件走 svc_storage */
+
+    return (void *)fopen(fs_vfs_path(path), "rb");
+}
+
+static lv_fs_res_t fs_close_cb(lv_fs_drv_t *drv, void *file_p)
+{
+    (void)drv;
+    if (file_p == NULL) return LV_FS_RES_INV_PARAM;
+
+    fclose((FILE *)file_p);
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t fs_read_cb(lv_fs_drv_t *drv, void *file_p, void *buf, uint32_t btr, uint32_t *br)
+{
+    (void)drv;
+    if (file_p == NULL || buf == NULL || br == NULL) return LV_FS_RES_INV_PARAM;
+
+    size_t n = fread(buf, 1, btr, (FILE *)file_p);
+    *br = (uint32_t)n;
+    return (n == btr) ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
+}
+
+static lv_fs_res_t fs_seek_cb(lv_fs_drv_t *drv, void *file_p, uint32_t pos, lv_fs_whence_t whence)
+{
+    (void)drv;
+    if (file_p == NULL) return LV_FS_RES_INV_PARAM;
+
+    int w = SEEK_SET;
+    if (whence == LV_FS_SEEK_CUR) w = SEEK_CUR;
+    else if (whence == LV_FS_SEEK_END) w = SEEK_END;
+
+    return (fseek((FILE *)file_p, (long)pos, w) == 0) ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
+}
+
+static lv_fs_res_t fs_tell_cb(lv_fs_drv_t *drv, void *file_p, uint32_t *pos_p)
+{
+    (void)drv;
+    if (file_p == NULL || pos_p == NULL) return LV_FS_RES_INV_PARAM;
+
+    long pos = ftell((FILE *)file_p);
+    if (pos < 0) return LV_FS_RES_FS_ERR;
+
+    *pos_p = (uint32_t)pos;
+    return LV_FS_RES_OK;
+}
+
+esp_err_t fw_asset_fs_path(const char *path, char *buf, size_t len)
+{
+    if (path == NULL || buf == NULL || len < 4) return ESP_ERR_INVALID_ARG;
+
+    int n = snprintf(buf, len, "%c:%s", FW_ASSET_FS_LETTER, path);
+    return (n > 0 && (size_t)n < len) ? ESP_OK : ESP_ERR_INVALID_SIZE;
+}
+
 esp_err_t fw_asset_init(void)
 {
-    ESP_LOGI(TAG, "initialized (Montserrat + CN 14/16 px + GB2312 fallback + symbol icons)");
+    if (!s_fs_registered) {
+        lv_fs_drv_init(&s_fs_drv);
+        s_fs_drv.letter = FW_ASSET_FS_LETTER;
+        s_fs_drv.open_cb = fs_open_cb;
+        s_fs_drv.close_cb = fs_close_cb;
+        s_fs_drv.read_cb = fs_read_cb;
+        s_fs_drv.seek_cb = fs_seek_cb;
+        s_fs_drv.tell_cb = fs_tell_cb;
+        lv_fs_drv_register(&s_fs_drv);
+        s_fs_registered = true;
+    }
+
+    ESP_LOGI(TAG, "initialized (Montserrat + CN 14/16 px + GB2312 fallback + symbol icons, fs '%c')",
+             FW_ASSET_FS_LETTER);
     return ESP_OK;
 }

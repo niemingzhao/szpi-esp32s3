@@ -19,13 +19,86 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_app_desc.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "svc.sysinfo";
+
+/* ------------------------------ 最近日志环 ------------------------------ */
+
+/* 无锁字节环：写者（日志钩子，可能在任意任务 / 中断上下文）只推进 s_log_head，
+ * 读者可能看到半行，用于调试控制台足够。2 KB 放在 BSS，不占堆。 */
+#define SYSINFO_LOG_RING_SIZE   2048u
+#define SYSINFO_LOG_LINE_MAX    192u
+
+static char s_log_ring[SYSINFO_LOG_RING_SIZE];
+static volatile uint32_t s_log_head = 0;
+static vprintf_like_t s_prev_vprintf = NULL;
+
+static void sysinfo_log_ring_push(const char *s, size_t len)
+{
+    uint32_t head = s_log_head;
+    for (size_t i = 0; i < len; i++) {
+        s_log_ring[head & (SYSINFO_LOG_RING_SIZE - 1)] = s[i];
+        head++;
+    }
+    s_log_head = head;
+}
+
+/* 日志钩子的重入保护。
+ *
+ * 日志输出路径内部可能**再触发日志**：例如 uart_write_bytes() 开头的
+ * ESP_RETURN_ON_FALSE 条件不满足时会打 "uart driver error"，而那条日志又要走输出 →
+ * 又回到本函数 → 无限递归，最终爆栈并写坏 FreeRTOS 对象（现场是
+ * `assert xQueueSemaphoreTake (pxQueue->uxItemSize == 0)` + 满屏重复回溯）。
+ *
+ * 递归一定发生在同一个任务里，所以用"当前任务是否已经在本函数中"判定重入：
+ * 重入时直接返回 0（内层那条属于输出路径自己的日志，丢弃不计入日志环）。
+ */
+static TaskHandle_t s_log_owner = NULL;
+
+/* 抄日志要用 vsnprintf，它的栈开销算在**调用者**头上：BTC_TASK 这类任务的栈本来就
+ * 被 Bluedroid 的日志吃到临界（现场：BTC_TASK 栈溢出），所以剩余栈太少时直接跳过抄录，
+ * 只保留原有输出路径（不加任何栈开销）。 */
+#define SYSINFO_LOG_MIN_STACK  512u
+
+static int sysinfo_log_vprintf(const char *fmt, va_list args)
+{
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    if (self != NULL && self == s_log_owner) {
+        return 0;
+    }
+
+    TaskHandle_t prev_owner = s_log_owner;
+    s_log_owner = self;
+
+    if (uxTaskGetStackHighWaterMark(NULL) >= SYSINFO_LOG_MIN_STACK) {
+        /* 行缓冲放静态区：不占调用者栈 */
+        static char line[SYSINFO_LOG_LINE_MAX];
+        va_list copy;
+        va_copy(copy, args);
+        int n = vsnprintf(line, sizeof(line), fmt, copy);
+        va_end(copy);
+
+        if (n > 0) {
+            size_t len = ((size_t)n < sizeof(line) - 1) ? (size_t)n : sizeof(line) - 1;
+            sysinfo_log_ring_push(line, len);
+        }
+    }
+
+    int ret = (s_prev_vprintf != NULL) ? s_prev_vprintf(fmt, args) : vprintf(fmt, args);
+
+    s_log_owner = prev_owner;
+    return ret;
+}
 
 /* ------------------------------ 崩溃记录 ------------------------------ */
 
@@ -199,10 +272,29 @@ esp_err_t svc_sysinfo_init(void)
         if (s_mux == NULL) return ESP_ERR_NO_MEM;
     }
 
+    /* 把 ESP_LOGx 输出同时抄进环形缓冲，供调试控制台查看最近日志 */
+    if (s_prev_vprintf == NULL) {
+        s_prev_vprintf = esp_log_set_vprintf(sysinfo_log_vprintf);
+    }
+
     sysinfo_consume_crash();
 
     ESP_LOGI(TAG, "initialized");
     return ESP_OK;
+}
+
+static const char *sysinfo_chip_model_str(esp_chip_model_t model)
+{
+    switch (model) {
+    case CHIP_ESP32:   return "ESP32";
+    case CHIP_ESP32S2: return "ESP32-S2";
+    case CHIP_ESP32S3: return "ESP32-S3";
+    case CHIP_ESP32C3: return "ESP32-C3";
+    case CHIP_ESP32C2: return "ESP32-C2";
+    case CHIP_ESP32C6: return "ESP32-C6";
+    case CHIP_ESP32H2: return "ESP32-H2";
+    default:           return "unknown";
+    }
 }
 
 const char *svc_sysinfo_reset_reason_str(void)
@@ -236,7 +328,41 @@ esp_err_t svc_sysinfo_get(svc_sysinfo_t *out)
     out->heap_psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     out->chip_cores = (uint8_t)ci.cores;
     out->chip_revision = (uint8_t)ci.revision;
+
+    const esp_app_desc_t *app = esp_app_get_description();
+    out->project_name = (app != NULL) ? app->project_name : "szpi-os";
+    out->app_version = (app != NULL) ? app->version : "unknown";
+    out->build_date = (app != NULL) ? app->date : "";
+    out->build_time = (app != NULL) ? app->time : "";
+    out->chip_model = sysinfo_chip_model_str(ci.model);
+
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        snprintf(out->mac, sizeof(out->mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        out->mac[0] = '\0';
+    }
+
+    uint32_t flash_size = 0;
+    out->flash_size = (esp_flash_get_size(NULL, &flash_size) == ESP_OK) ? flash_size : 0;
     return ESP_OK;
+}
+
+esp_err_t svc_sysinfo_get_recent_logs(char *buf, size_t len)
+{
+    if (buf == NULL || len < 2) return ESP_ERR_INVALID_ARG;
+
+    uint32_t head = s_log_head;
+    uint32_t avail = (head < SYSINFO_LOG_RING_SIZE) ? head : SYSINFO_LOG_RING_SIZE;
+    size_t n = (avail < (len - 1)) ? (size_t)avail : (len - 1);
+
+    for (size_t i = 0; i < n; i++) {
+        buf[i] = s_log_ring[(head - n + i) & (SYSINFO_LOG_RING_SIZE - 1)];
+    }
+    buf[n] = '\0';
+
+    return (n > 0) ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t svc_sysinfo_get_crash_log(char *buf, size_t len)

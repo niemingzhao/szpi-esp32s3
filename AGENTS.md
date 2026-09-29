@@ -74,9 +74,9 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 |------|------|------|
 | `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、`es7210`、`gc0308`、`i2c`、BOOT 按键、LEDC、BSP | 已实现（TF 卡的 sdmmc/fatfs 挂载由 Peripherals 层的 `periph_storage` 直接用 IDF 组件完成，不单独设驱动） |
 | `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*`、`periph_camera_*` | 已实现：LCD/Touch/Button/IMU/Storage/IO/Audio（播放 + ES7210 录音）/Camera（按需初始化，不参与启动） |
-| `services/` | `svc_event_bus`、`svc_settings`、`svc_storage`、`svc_time`、`svc_audio`、`svc_net`、`svc_bt`、`svc_bt_hid`、`svc_power`、`svc_imu`、`svc_watchdog`、`svc_notification`、`svc_ota`、`svc_mqtt`、`svc_ws`、`svc_sysinfo`、`svc_shell` | 全部已实现：事件总线 / 设置（含 blob）/ 存储（含 TF 热插拔）/ 时间 / 音频（WAV + MP3 + tone 播放、ES7210 录音）/ 网络（STA + HTTP + SmartConfig + AP/Web 配网）/ 蓝牙 BLE（GATT 从机 + 广播 + 扫描 + HID 设备模拟）/ 电源（背光、熄屏、按键与 IMU 唤醒）/ IMU 运动与姿态 / 看门狗（喂狗超时自动重启）/ 通知（持久化 + 提示音）/ OTA(HTTPS) / MQTT / WebSocket / 系统信息（含崩溃记录与性能监控）/ 串口命令行 |
+| `services/` | `svc_event_bus`、`svc_settings`、`svc_storage`、`svc_time`、`svc_audio`、`svc_net`、`svc_bt`、`svc_bt_hid`、`svc_power`、`svc_imu`、`svc_watchdog`、`svc_notification`、`svc_ota`、`svc_mqtt`、`svc_ws`、`svc_sysinfo`、`svc_shell`、`svc_camera` | 全部已实现：事件总线 / 设置（含 blob、恢复出厂设置）/ 存储（含 TF 热插拔、目录迭代、整块读写、格式化）/ 时间 / 音频（WAV + MP3 + tone 播放、ES7210 录音）/ 网络（STA + HTTP + SmartConfig + AP/Web 配网）/ 蓝牙 BLE（GATT 从机 + 广播 + 扫描 + HID 设备模拟）/ 电源（背光、熄屏、按键与 IMU 唤醒）/ IMU 运动与姿态（含原始数据读取）/ 看门狗（喂狗超时自动重启）/ 通知（持久化 + 提示音）/ OTA(HTTPS) / MQTT / WebSocket / 系统信息（崩溃记录、任务 CPU、最近日志环、硬件与固件信息）/ 串口命令行 / 摄像头（按需开关，把 esp32-camera 类型挡在服务层内） |
 | `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（状态栏集成返回 / 主页 / 通知 / 控制中心按钮与 Wi-Fi / 蓝牙 / 亮度图标；控制中心含 Wi-Fi、蓝牙、手电筒、锁定磁贴与亮度 / 音量滑块、试听，手电筒用屏幕背光实现（板载无可控 LED）；通知中心支持点击打开与长按单条撤销；锁屏浮层（上滑或长按解锁）；App 支持启动参数与 URI 启动；中文由 assets 的 Noto 子集 14/16 px 渲染；开机画面用官方 Logo + 提示音） |
-| `apps/` | `app_home`、`app_clock`、`app_settings`、`app_ble` | 已实现这 4 个（Settings：Wi-Fi 扫描 / 免密重连 / 忘记、亮度、背光超时、主题（立即生效）、关于；BLE：HID 模拟器，媒体键 + 方向键）；`app_music`、`app_file` 等其余 13 个规划中 |
+| `apps/` | `app_home` + PRD 3.11 的 17 个内置 App：`app_clock`、`app_settings`、`app_music`、`app_recorder`、`app_image`、`app_video`、`app_camera`、`app_file`、`app_editor`、`app_calc`、`app_imu`、`app_ble`、`app_browser`、`app_ota`、`app_debug`、`app_about`、`app_factory` | **17 个全部实现**（详见各 App 文件头）。已知差距：Video 只做帧序列播放（真 MJPEG 等 MM-009 的 JPEG 解码器）；Browser 只支持 http://（`svc_http_get` 没挂证书）；OTA 只支持 HTTPS URL（本地 .bin 需要 Services 再开 API）；Editor 软键盘只有拉丁字符；Factory 的"BOOT 长按启动"属于启动路径，还没接 |
 
 五层目录均已建立：`drivers/`、`peripherals/`、`services/`、`framework/`、`apps/`。新增模块时遵守 `docs/02-architecture/01-layer-design.md`：
 
@@ -296,6 +296,7 @@ DBG-003 的任务 CPU 占用依赖 FreeRTOS 运行时统计，`sdkconfig.default
 - `python tools/check_ui_colors.py` —— 创建了标签却没显式设色的地方（浅色主题下会白字白底看不见）
 - `python tools/check_api_includes.py` —— 调用了别的层的函数，但声明它的头文件不可见（GCC 14 下是错误；踩过 `periph_camera.c` 缺 `drv_common.h`）
 - `python tools/check_decl_order.py` —— 文件内 static 定义晚于使用（踩过 `svc_bt_hid.c` 把 static 块挪到 `svc_bt_hid_init()` 之后）
+- `python tools/check_lvgl_api.py` —— App 层用到的 LVGL 标识符在 `managed_components/lvgl__lvgl` 里是否存在（踩过 8.3 没有 `LV_LABEL_LONG_SCROLL_RIGHT`），顺便列出带 `%s` 的 `snprintf` 供人工确认截断风险（GCC 14 的 `-Werror=format-truncation` 会把 256 字节的 `svc_storage_entry_t.name` 塞进小缓冲直接判错）
 
 ### 4.22 内部 RAM 很紧，动配置前先算账
 
@@ -311,6 +312,12 @@ DBG-003 的任务 CPU 占用依赖 FreeRTOS 运行时统计，`sdkconfig.default
 - 对策（都在 `sdkconfig.defaults`）：`CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384`（默认 32768，
   大块 DMA 缓冲都在开机早期分配，运行期只有小请求）、`CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8` /
   `STATIC_TX_BUFFER_NUM=8`（默认 16/16，每块约 1.6 KB 且只能用内部 RAM）、LVGL 帧缓冲降到 10 行。
+- **17 个 App 落地后又撞了一次同类 OOM**（Wi-Fi 算 WPA PSK 时 `lock_init_generic` → `abort`）：启动可见堆从
+  190 KB 掉到 156 KB —— App 的静态数组 + 桌面上 18 个图标的 LVGL 对象（LVGL 走普通 malloc，小于阈值就落
+  内部 RAM）一起吃掉约 34 KB。两条对策：`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0`（通用 malloc 一律优先
+  PSRAM；FreeRTOS 对象 / 任务栈 / DMA 缓冲走 `MALLOC_CAP_INTERNAL`，不受影响，BLE 的队列与栈仍在内部），
+  以及把 App 里的大静态数组清掉（Browser 的 6 KB 响应缓冲改成运行期 malloc、Editor 的路径表 3 KB → 2 KB、
+  Video 的目录表 1.5 KB → 1.2 KB、Music / Recorder 列表长度减半）。**新增 App 时 static 数组别超过几百字节。**
 - 改完之后的实测数字（可用作基准）：BLE 初始化前 `dma-internal free=156763 largest=110592`；
   **BLE 控制器 + 广播环境要吃掉约 52 KB**（`init done` 时 free=104219）；最紧的时刻是
   "Wi-Fi 刚连上 + 首屏 + SPIFFS 挂载"这一点，`free≈18 KB`，之后就稳定了；PSRAM 始终有 8.2 MB 富余。
@@ -325,7 +332,38 @@ FreeRTOS 对象真正会耗的那块；`MALLOC_CAP_INTERNAL` 会把 IRAM 算进�
 - 串口 `sysinfo`：当前堆余量
 
 **已知待办**：`periph.audio` 的麦克风自检一直读到满量程（`peak 32767/32767`），说明 I2S RX 没拿到真实
-数据（ES7210 的 I2C 配置是通的，怀疑串口格式 / 增益 / 通道映射），等做录音 App 时再处理。
+数据（ES7210 的 I2C 配置是通的，怀疑串口格式 / 增益 / 通道映射）。录音 App 已能录出带 WAV 头的文件，
+但音质要等这个修好才算通过验收（"录音后文件可在 PC 播放"）。
+
+### 4.23 新增 App 用到的公共设施（不要各写一套）
+
+写 App 前先看这一节，能省掉大量重复代码，也避免各 App 视觉不一致：
+
+| 用途 | 用谁 |
+|------|------|
+| 页面根屏 + 内容容器（从状态栏下方开始、内边距 12、行距 8） | `fw_ui_page(&content)` |
+| 整行入口（高 50、卡片底 + 描边，右侧可显示数值） | `fw_ui_row_btn()` + `fw_ui_row_btn_value()` |
+| "标签 + 滑块"一行 | `fw_ui_slider_row()` |
+| 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
+| 主题色 | 只用 `fw_theme_color_*()`（见 4.14） |
+| 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`、`fw_asset_symbol_for(app_name)` |
+| LVGL 显示图片 / GIF（按文件路径） | `fw_asset_fs_path()` 转成 `"A:/sdcard/..."` 再给 `lv_img_set_src()`；FS 驱动在 `fw_asset_init()` 里注册（POSIX 读 VFS，只读） |
+| 目录遍历 | `svc_storage_iter_start/next/end`（`iter_next` 返回的是内部缓冲，用完必须马上拷走） |
+| 整块读写小文件（编辑器的文本、相机的 JPEG） | `svc_storage_read/write/remove/exists`（读上限 1 MB） |
+| 摄像头 | `svc_camera_*`（不要把 `esp_camera.h` 引进 App） |
+| 系统信息 / 最近日志 / 任务 CPU | `svc_sysinfo_get()`、`svc_sysinfo_get_recent_logs()`、`svc_sysinfo_get_tasks()` |
+
+两条硬约束：**App 不直接调 IDF / Peripherals / Drivers**（缺接口就往 Services 加薄封装）；**不要在 App 里加大块 static 缓冲**（内部 RAM 只有十几 KB 余量，见 4.22）。
+
+每写完一批 App：`python tools/check_cn_text.py`（新文案的字加进 `tools/cn_chars.py` 后 `python tools/gen_cn_font.py --sizes 14,16`）、`check_ui_colors.py`、`check_api_includes.py`、`check_decl_order.py` 四个脚本跑一遍。
+
+### 4.24 往日志里挂钩子必须做重入保护
+
+`svc_sysinfo` 为了给 Debug App 提供"最近日志"，用 `esp_log_set_vprintf()` 装了钩子：把每行抄进无锁环，再调用原来的输出函数。这个钩子必须自己防重入，因为**日志输出路径内部会再打日志**：`uart_write_bytes()` 开头的 `ESP_RETURN_ON_FALSE` 一旦条件不满足就 `ESP_LOGE`，这条日志又走输出 → 回到钩子 → 再写 UART → 再失败……**无限递归**，实测表现是满屏重复回溯 + `assert xQueueSemaphoreTake (pxQueue->uxItemSize == 0)`（栈被压爆后写坏了 FreeRTOS 对象），而且因为 panic 里又打日志，重启循环。
+
+做法（见 `svc_sysinfo.c`）：用"当前任务是否已在本函数里"判断重入（`xTaskGetCurrentTaskHandle()` 与保存的 owner 比对，重入直接 `return 0`），行缓冲放**静态区**而不是调用者栈上，并且**剩余栈不足时不抄录**（`uxTaskGetStackHighWaterMark(NULL) < 512` 就跳过）—— `vsnprintf` 的栈开销算在调用者头上，BTC_TASK（3072 B，被 Bluedroid 日志吃到临界）实测会被压爆栈；跳过抄录后原有输出路径的栈开销不变。实在还溢出再抬 `CONFIG_BT_BTC_TASK_STACK_SIZE`。
+
+界面侧配套的坑：**不要在定时刷新的页面上放超大自动换行标签**。Debug App 最初每 2 s 刷新一个 1.2 KB 的 `LV_LABEL_LONG_WRAP` 标签并 `lv_obj_scroll_to_view()`，LVGL 任务会长时间卡在 `draw_scrollbar → lv_obj_get_self_height → lv_label 布局 → 字体 glyph 查询`，把同核的 `svc_imu` 饿死 → 看门狗 abort。现在只显示最近 512 B、刷新间隔 3 s、不再自动滚动。
 
 ---
 

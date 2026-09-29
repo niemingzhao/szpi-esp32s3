@@ -81,6 +81,18 @@ esp_err_t svc_net_get_status(svc_net_status_t *status);
 esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 
+/** 异步 GET 的回调（在 svc.http 任务里执行，不是 LVGL 任务，界面必须自己加 LVGL 锁） */
+typedef void (*svc_http_cb_t)(const char *body, esp_err_t err, void *user);
+
+/**
+ * @brief 异步 HTTP GET（自己起一个临时任务，避免阻塞调用者）
+ *
+ * 请求完成（或失败）后调用 cb(body, err, user)；body 就是 resp_buf，失败时为空串。
+ * 注意 svc_http_get 只支持 http://（没有挂证书，https 会失败）；OTA 走 svc_ota。
+ */
+esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
+                             svc_http_cb_t cb, void *user);
+
 /** MQTT / WebSocket / OTA 已拆成独立服务：见 svc_mqtt.h、svc_ws.h、svc_ota.h */
 
 #ifdef __cplusplus

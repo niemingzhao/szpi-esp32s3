@@ -46,6 +46,11 @@ void periph_camera_return_frame(camera_fb_t *frame);
  */
 esp_err_t periph_camera_set_framesize(framesize_t size);
 
+/**
+ * @brief 切换像素格式（RGB565 预览 / JPEG 拍照）
+ */
+esp_err_t periph_camera_set_pixformat(pixformat_t format);
+
 #ifdef __cplusplus
 }
 #endif

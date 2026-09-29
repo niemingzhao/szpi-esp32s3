@@ -354,3 +354,134 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
     lvgl_port_unlock();
     return g;
 }
+
+/* ------------------------------ App 页面常用件 ------------------------------ */
+
+lv_obj_t *fw_ui_page(lv_obj_t **content)
+{
+    lvgl_port_lock(0);
+
+    lv_obj_t *root = lv_obj_create(NULL);
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(root, fw_theme_color_bg_primary(), 0);
+    lv_obj_set_style_pad_all(root, 0, 0);
+
+    /* 内容区从状态栏下方开始（与 Settings / 浮层一致） */
+    lv_obj_t *body = lv_obj_create(root);
+    lv_obj_set_size(body, lv_pct(100), lv_disp_get_ver_res(NULL) - FW_STATUSBAR_H);
+    lv_obj_set_pos(body, 0, FW_STATUSBAR_H);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_pad_all(body, 12, 0);
+    lv_obj_set_style_pad_row(body, 8, 0);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    if (content != NULL) *content = body;
+
+    lvgl_port_unlock();
+    return root;
+}
+
+lv_obj_t *fw_ui_row_btn(lv_obj_t *parent, const char *symbol, const char *text,
+                        lv_event_cb_t cb, void *user)
+{
+    lvgl_port_lock(0);
+
+    lv_obj_t *btn = lv_btn_create(parent);
+    lv_obj_set_width(btn, lv_pct(100));
+    lv_obj_set_height(btn, 50);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
+    lv_obj_set_style_radius(btn, 10, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_border_color(btn, fw_theme_color_border(), 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    if (cb != NULL) lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, user);
+
+    if (symbol != NULL) {
+        lv_obj_t *icon = lv_label_create(btn);
+        lv_label_set_text(icon, symbol);
+        lv_obj_set_style_text_font(icon, fw_asset_font_20(), 0);
+        lv_obj_set_style_text_color(icon, fw_theme_color_accent(), 0);
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
+    }
+
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, text != NULL ? text : "");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(58));
+    lv_obj_set_style_text_font(label, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(label, fw_theme_color_text_primary(), 0);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 44, 0);
+
+    /* 右侧数值文本：先建好（空），由 fw_ui_row_btn_value() 更新；用 USER_1 标记便于查找 */
+    lv_obj_t *value = lv_label_create(btn);
+    lv_label_set_text(value, "");
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(value, lv_pct(34));
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(value, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(value, fw_theme_color_text_secondary(), 0);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -12, 0);
+    lv_obj_add_flag(value, LV_OBJ_FLAG_USER_1);
+
+    lvgl_port_unlock();
+    return btn;
+}
+
+esp_err_t fw_ui_row_btn_value(lv_obj_t *btn, const char *value)
+{
+    if (btn == NULL) return ESP_ERR_INVALID_ARG;
+
+    lvgl_port_lock(0);
+
+    uint32_t n = lv_obj_get_child_cnt(btn);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(btn, (int32_t)i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_USER_1)) {
+            lv_label_set_text(child, value != NULL ? value : "");
+            lvgl_port_unlock();
+            return ESP_OK;
+        }
+    }
+
+    lvgl_port_unlock();
+    return ESP_ERR_NOT_FOUND;
+}
+
+lv_obj_t *fw_ui_slider_row(lv_obj_t *parent, const char *label, int32_t min, int32_t max,
+                           int32_t value, lv_event_cb_t cb, void *user)
+{
+    lvgl_port_lock(0);
+
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_size(row, lv_pct(100), 30);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+
+    lv_obj_t *l = lv_label_create(row);
+    lv_label_set_text(l, label != NULL ? label : "");
+    lv_obj_set_style_text_font(l, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(l, fw_theme_color_text_primary(), 0);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *bar = lv_slider_create(row);
+    lv_obj_set_width(bar, lv_pct(78));
+    lv_obj_set_height(bar, 16);
+    lv_obj_align(bar, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_slider_set_range(bar, min, max);
+    lv_slider_set_value(bar, value, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar, fw_theme_color_bg_secondary(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, fw_theme_color_accent(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, fw_theme_color_accent(), LV_PART_KNOB);
+    lv_obj_set_style_border_width(bar, 1, LV_PART_KNOB);
+    lv_obj_set_style_border_color(bar, fw_theme_color_border(), LV_PART_KNOB);
+    if (cb != NULL) lv_obj_add_event_cb(bar, cb, LV_EVENT_VALUE_CHANGED, user);
+
+    lvgl_port_unlock();
+    return bar;
+}

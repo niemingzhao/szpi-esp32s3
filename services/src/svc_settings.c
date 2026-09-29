@@ -168,3 +168,21 @@ esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size
     nvs_close(h);
     return err;
 }
+
+esp_err_t svc_settings_factory_reset(void)
+{
+    ESP_LOGW(TAG, "factory reset: erasing NVS partition");
+
+    esp_err_t err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_erase failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* 重新初始化，保证擦除后（重启前）其它组件再开句柄不会失败 */
+    err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init after erase failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}

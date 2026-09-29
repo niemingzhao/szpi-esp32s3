@@ -31,6 +31,14 @@ typedef struct {
     size_t heap_psram_free;       /* PSRAM 剩余字节 */
     uint8_t chip_cores;
     uint8_t chip_revision;
+    /* 以下供"关于本机"使用 */
+    const char *project_name;     /* 工程名 */
+    const char *app_version;      /* 应用版本（git describe 或 CONFIG_APP_PROJECT_VER） */
+    const char *build_date;       /* 编译日期 */
+    const char *build_time;       /* 编译时间 */
+    const char *chip_model;       /* "ESP32-S3" 等 */
+    char mac[18];                 /* Wi-Fi STA MAC，形如 "9c:13:9e:8a:ca:20" */
+    uint32_t flash_size;          /* 外部 flash 容量（字节） */
 } svc_sysinfo_t;
 
 /** 单个任务的运行状态（DBG-003） */
@@ -79,6 +87,15 @@ esp_err_t svc_sysinfo_get_tasks(svc_sysinfo_task_t *out, size_t max, size_t *cou
  * @brief 总体 CPU 占用百分比（不含 idle 任务；首次调用返回 0）
  */
 esp_err_t svc_sysinfo_get_cpu_usage(uint8_t *percent);
+
+/**
+ * @brief 最近日志的尾部（供调试控制台显示，'\0' 结尾）
+ *
+ * 从开机起把 ESP_LOGx 输出同时抄进一个无锁环形缓冲（无锁 = 任何上下文都能安全写入），
+ * 这里返回其中最后的内容；缓冲区大小见实现里的 SYSINFO_LOG_RING_SIZE（2 KB）。
+ * 没有任何日志时返回 ESP_ERR_NOT_FOUND。
+ */
+esp_err_t svc_sysinfo_get_recent_logs(char *buf, size_t len);
 
 #ifdef __cplusplus
 }

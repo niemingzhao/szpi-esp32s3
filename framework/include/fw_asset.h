@@ -57,6 +57,14 @@ const lv_font_t *fw_asset_font_cn_large(void);
  */
 const char *fw_asset_symbol_for(const char *app_name);
 
+/**
+ * @brief 把绝对路径转成 LVGL 能读的路径（加内部磁盘号，如 "A:/sdcard/a.png"）
+ *
+ * LVGL 的图片解码自己读文件，必须走注册过的 lv_fs_drv；用本函数转换后再交给
+ * lv_img_set_src()。目录列表 / 写文件仍用 svc_storage 的接口。
+ */
+esp_err_t fw_asset_fs_path(const char *path, char *buf, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

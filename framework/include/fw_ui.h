@@ -95,6 +95,34 @@ lv_obj_t *fw_ui_list_add(lv_obj_t *list, const char *text, lv_event_cb_t cb, voi
  */
 lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord_t item_h);
 
+/**
+ * @brief 创建 App 页面并返回根屏
+ *
+ * 根屏：bg_primary、无滚动、无内边距；内容容器从状态栏下方开始（320 × (240-28)，
+ * 内边距 12、行距 8、纵向 flex），通过 content 返回（可为 NULL）。
+ * on_create 直接返回本函数的根屏即可。
+ */
+lv_obj_t *fw_ui_page(lv_obj_t **content);
+
+/**
+ * @brief 创建整行入口按钮（高 50，卡片底色 + 1 px 描边；左侧图标 + 文本，右侧数值位）
+ *
+ * 数值用 fw_ui_row_btn_value() 更新。
+ */
+lv_obj_t *fw_ui_row_btn(lv_obj_t *parent, const char *symbol, const char *text,
+                        lv_event_cb_t cb, void *user);
+
+/**
+ * @brief 更新整行按钮右侧的数值文本（按钮不是 fw_ui_row_btn 创建的会返回 ESP_ERR_NOT_FOUND）
+ */
+esp_err_t fw_ui_row_btn_value(lv_obj_t *btn, const char *value);
+
+/**
+ * @brief 创建"标签 + 滑块"一行（高 30，滑块 16 高）；返回滑块供读取数值
+ */
+lv_obj_t *fw_ui_slider_row(lv_obj_t *parent, const char *label, int32_t min, int32_t max,
+                           int32_t value, lv_event_cb_t cb, void *user);
+
 #ifdef __cplusplus
 }
 #endif

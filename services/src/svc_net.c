@@ -805,3 +805,56 @@ esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_
     esp_http_client_cleanup(c);
     return err;
 }
+
+/* ------------------------------ 异步 GET ------------------------------ */
+
+#define SVC_HTTP_URL_MAX      256
+#define SVC_HTTP_TASK_STACK   6144
+#define SVC_HTTP_ASYNC_TIMEOUT_MS  15000
+
+typedef struct {
+    char url[SVC_HTTP_URL_MAX];
+    char *buf;
+    size_t buf_len;
+    svc_http_cb_t cb;
+    void *user;
+} svc_http_req_t;
+
+static void svc_http_task(void *arg)
+{
+    svc_http_req_t *req = (svc_http_req_t *)arg;
+
+    esp_err_t err = svc_http_get(req->url, req->buf, req->buf_len, SVC_HTTP_ASYNC_TIMEOUT_MS);
+    if (err != ESP_OK) req->buf[0] = '\0';
+
+    if (req->cb != NULL) {
+        req->cb(req->buf, err, req->user);
+    }
+
+    free(req);
+    vTaskDelete(NULL);
+}
+
+esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
+                             svc_http_cb_t cb, void *user)
+{
+    if (url == NULL || resp_buf == NULL || buf_len == 0) return ESP_ERR_INVALID_ARG;
+    if (strlen(url) >= SVC_HTTP_URL_MAX) return ESP_ERR_INVALID_SIZE;
+
+    svc_http_req_t *req = calloc(1, sizeof(*req));
+    if (req == NULL) return ESP_ERR_NO_MEM;
+
+    strlcpy(req->url, url, sizeof(req->url));
+    req->buf = resp_buf;
+    req->buf_len = buf_len;
+    req->cb = cb;
+    req->user = user;
+
+    if (xTaskCreate(svc_http_task, "svc.http", SVC_HTTP_TASK_STACK, req, 5, NULL) != pdPASS) {
+        free(req);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "http get (async): %s", url);
+    return ESP_OK;
+}
