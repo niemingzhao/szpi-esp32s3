@@ -83,7 +83,10 @@ static void key_task(void *arg)
                 uint32_t dur_ms = (uint32_t)(now - press_tick) * portTICK_PERIOD_MS;
 
                 if (dur_ms < DEBOUNCE_MS) {
-                    continue;  /* 抖动，忽略 */
+                    /* 抖动：连双击等待状态一起复位，避免卡在"等第二击"上 */
+                    pending_click = false;
+                    waiting_double = false;
+                    continue;
                 }
 
                 if (dur_ms >= VERY_LONG_PRESS_MS) {

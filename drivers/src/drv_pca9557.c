@@ -11,6 +11,9 @@ static const char *TAG = "drv.pca9557";
 
 #define PCA9557_ADDR         0x19
 
+/* 上电默认输出：DVP_PWDN=1(掉电) | LCD_CS=1(未选中) | PA_EN=0(关闭功放) */
+#define PCA9557_OUT_DEFAULT  0x05
+
 // PCA9557 寄存器
 #define PCA9557_INPUT_PORT    0x00
 #define PCA9557_OUTPUT_PORT   0x01
@@ -19,6 +22,8 @@ static const char *TAG = "drv.pca9557";
 
 static bool s_initialized = false;
 static i2c_master_dev_handle_t s_dev = NULL;
+/* 输出寄存器影子：避免运行期多个调用方"读-改-写"互相覆盖，也省掉一次 I2C 读 */
+static uint8_t s_out_shadow = PCA9557_OUT_DEFAULT;
 
 static esp_err_t pca9557_read_reg(uint8_t reg, uint8_t *data)
 {
@@ -42,7 +47,8 @@ esp_err_t drv_pca9557_init(void)
     ESP_ERROR_CHECK(pca9557_write_reg(PCA9557_CONFIG_PORT, 0xF8));
 
     // 默认值: DVP_PWDN=1(掉电), LCD_CS=1(未选中), PA_EN=0(关闭)
-    ESP_ERROR_CHECK(pca9557_write_reg(PCA9557_OUTPUT_PORT, 0x05));
+    s_out_shadow = PCA9557_OUT_DEFAULT;
+    ESP_ERROR_CHECK(pca9557_write_reg(PCA9557_OUTPUT_PORT, s_out_shadow));
 
     s_initialized = true;
     ESP_LOGI(TAG, "PCA9557 initialized (BIT0=CS, BIT1=PA_EN, BIT2=DVP_PWDN)");
@@ -51,20 +57,19 @@ esp_err_t drv_pca9557_init(void)
 
 esp_err_t drv_pca9557_set_pin(uint8_t gpio_bit, uint8_t level)
 {
-    uint8_t data;
-    ESP_ERROR_CHECK(pca9557_read_reg(PCA9557_OUTPUT_PORT, &data));
-
     if (level) {
-        data |= gpio_bit;
+        s_out_shadow |= gpio_bit;
     } else {
-        data &= ~gpio_bit;
+        s_out_shadow &= ~gpio_bit;
     }
 
-    return pca9557_write_reg(PCA9557_OUTPUT_PORT, data);
+    return pca9557_write_reg(PCA9557_OUTPUT_PORT, s_out_shadow);
 }
 
 esp_err_t drv_pca9557_get_pin(uint8_t gpio_bit, uint8_t *out_level)
 {
+    if (out_level == NULL) return ESP_ERR_INVALID_ARG;
+
     uint8_t data;
     ESP_ERROR_CHECK(pca9557_read_reg(PCA9557_INPUT_PORT, &data));
     *out_level = (data & gpio_bit) ? 1 : 0;

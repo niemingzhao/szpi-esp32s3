@@ -94,10 +94,10 @@ esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t
 
 ### 2.3 实现要点
 
-- 内部维护 `handler_table[event_id]` 链表
-- 内部队列 `event_queue`（深度 32）
-- 单一 `dispatcher_task` (优先级 5, 核心 0) 从队列取事件并调用所有订阅者
-- 订阅者回调中禁止阻塞太久
+- 订阅表是定长数组（全局上限 `SVC_EVENT_MAX_SUBS` = 32），同一 (id, handler, user_data) 重复订阅幂等
+- 事件经内部队列投递给单一 dispatcher 任务；队列满时记日志并返回 `ESP_ERR_TIMEOUT`（不静默丢）
+- 单条事件负载超过 `SVC_EVENT_DATA_MAX` 会截断并记日志
+- 订阅者回调里不要长时间阻塞；订阅 / 退订只在初始化或 App 生命周期回调里做
 
 ## 3. svc_time（时间服务）
 
@@ -355,7 +355,7 @@ esp_err_t svc_storage_get_path(periph_storage_type_t type, char *buf, size_t len
 // 填入 "/sdcard" 或 "/internal"
 
 esp_err_t svc_storage_app_dir(const char *app_name, char *buf, size_t len);
-// 返回 /internal/apps/<app_name>/
+// 返回 /internal/apps/<app_name>（不带结尾斜杠）
 
 esp_err_t svc_storage_mkdir(const char *path);
 esp_err_t svc_storage_rmdir(const char *path);
@@ -462,13 +462,14 @@ esp_err_t svc_power_request_shutdown(void);
 
 ```c
 esp_err_t services_init(void) {
-    ESP_ERROR_CHECK(svc_event_bus_init());        // 1. 第一个，所有服务都依赖
-    ESP_ERROR_CHECK(svc_storage_init());          // 2. 存储（其他服务可能要用）
-    ESP_ERROR_CHECK(svc_time_init());             // 3. 时间
-    ESP_ERROR_CHECK(svc_audio_init());            // 4. 音频
-    ESP_ERROR_CHECK(svc_net_init());              // 5. 网络
-    ESP_ERROR_CHECK(svc_power_init());            // 6. 电源
-    ESP_ERROR_CHECK(svc_notification_init());     // 7. 通知（依赖事件总线）
+    ESP_ERROR_CHECK(svc_event_bus_init());        // 1. 事件总线（所有服务都依赖）
+    ESP_ERROR_CHECK(svc_settings_init());         // 2. 配置（NVS）
+    ESP_ERROR_CHECK(svc_storage_init());          // 3. 存储
+    ESP_ERROR_CHECK(svc_time_init());             // 4. 时间
+    ESP_ERROR_CHECK(svc_audio_init());            // 5. 音频
+    ESP_ERROR_CHECK(svc_net_init());              // 6. 网络
+    ESP_ERROR_CHECK(svc_power_init());            // 7. 电源
+    ESP_ERROR_CHECK(svc_notification_init());     // 8. 通知（依赖事件总线）
     return ESP_OK;
 }
 ```

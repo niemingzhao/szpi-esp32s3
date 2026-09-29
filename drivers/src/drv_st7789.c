@@ -60,10 +60,11 @@ esp_err_t drv_st7789_init(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(s_io_handle, &panel_config, &s_panel_handle));
 
-    // 软件复位
+    /* 复位 / CS 时序必须与官方例程一致：先发软件复位（此时 CS 仍为高）→ 再拉低 CS → 再 init。
+     * 面板 RST 为 NC，这里不依赖复位本身；GRAM 残留由 periph_lcd 开机时的整屏清黑处理。
+     * 注意：若把"拉低 CS"挪到复位之前，SWRESET 会真正生效，而 ST7789 复位后需要约 120 ms
+     * 才能接受新命令（IDF 只等 20 ms），后续初始化命令会被丢弃 → 开机只有背光没有画面。 */
     esp_lcd_panel_reset(s_panel_handle);
-
-    // 由 PCA9557 拉低 CS
     drv_pca9557_set_pin(DRV_PCA9557_LCD_CS, 0);
 
     // 初始化面板
@@ -82,6 +83,7 @@ esp_err_t drv_st7789_init(void)
 
 esp_err_t drv_st7789_get_panel_handle(esp_lcd_panel_handle_t *out_handle)
 {
+    if (out_handle == NULL) return ESP_ERR_INVALID_ARG;
     if (s_panel_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -91,6 +93,7 @@ esp_err_t drv_st7789_get_panel_handle(esp_lcd_panel_handle_t *out_handle)
 
 esp_err_t drv_st7789_get_io_handle(esp_lcd_panel_io_handle_t *out_io_handle)
 {
+    if (out_io_handle == NULL) return ESP_ERR_INVALID_ARG;
     if (s_io_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }

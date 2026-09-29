@@ -17,6 +17,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,17 @@ static volatile bool s_user_disconnect = false;
 static volatile bool s_scan_done = false;
 static volatile uint8_t s_retry_count = 0;
 static svc_net_status_t s_status;
+static SemaphoreHandle_t s_status_mux = NULL;   /* s_status 由 Wi-Fi 事件任务写、被任意任务读 */
+
+static void status_lock(void)
+{
+    if (s_status_mux != NULL) xSemaphoreTake(s_status_mux, portMAX_DELAY);
+}
+
+static void status_unlock(void)
+{
+    if (s_status_mux != NULL) xSemaphoreGive(s_status_mux);
+}
 
 static const char *reason_str(int reason)
 {
@@ -86,10 +98,13 @@ static void handle_wifi_event(void *arg, esp_event_base_t base, int32_t id, void
 
         bool was_connecting = s_connecting;
         s_connecting = false;
+
+        status_lock();
         s_status.wifi_connected = false;
         s_status.rssi = 0;
         memset(s_status.wifi_ssid, 0, sizeof(s_status.wifi_ssid));
         memset(s_status.ip_addr, 0, sizeof(s_status.ip_addr));
+        status_unlock();
 
         if (was_connecting) {
             svc_event_bus_publish(SVC_EVENT_WIFI_CONNECT_FAILED, NULL, 0);
@@ -123,20 +138,26 @@ static void handle_ip_event(void *arg, esp_event_base_t base, int32_t id, void *
     if (id != IP_EVENT_STA_GOT_IP) return;
 
     ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-    snprintf(s_status.ip_addr, sizeof(s_status.ip_addr), IPSTR, IP2STR(&e->ip_info.ip));
+    char ip[sizeof(s_status.ip_addr)];
+    snprintf(ip, sizeof(ip), IPSTR, IP2STR(&e->ip_info.ip));
 
     wifi_ap_record_t ap;
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+    bool have_ap = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+
+    status_lock();
+    strlcpy(s_status.ip_addr, ip, sizeof(s_status.ip_addr));
+    if (have_ap) {
         strlcpy(s_status.wifi_ssid, (const char *)ap.ssid, sizeof(s_status.wifi_ssid));
         s_status.rssi = ap.rssi;
     }
-
     s_status.wifi_connected = true;
+    status_unlock();
+
     s_connecting = false;
     s_connect_pending = false;
     s_retry_count = 0;
 
-    ESP_LOGI(TAG, "got ip: %s", s_status.ip_addr);
+    ESP_LOGI(TAG, "got ip: %s", ip);
     svc_event_bus_publish(SVC_EVENT_WIFI_CONNECTED, NULL, 0);
     svc_time_sync_ntp();   /* 连上就同步时间（svc_time 侧也会订阅，双保险） */
 }
@@ -144,6 +165,11 @@ static void handle_ip_event(void *arg, esp_event_base_t base, int32_t id, void *
 esp_err_t svc_net_init(void)
 {
     if (s_wifi_inited) return ESP_OK;
+
+    if (s_status_mux == NULL) {
+        s_status_mux = xSemaphoreCreateMutex();
+        if (s_status_mux == NULL) return ESP_ERR_NO_MEM;
+    }
 
     esp_err_t err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
@@ -158,10 +184,13 @@ esp_err_t svc_net_init(void)
     err = esp_wifi_init(&cfg);
     if (err != ESP_OK) return err;
 
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* 凭据由 svc_settings 持久化 */
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* 凭据由 svc_settings 持久化 */
+    if (err != ESP_OK) return err;
 
-    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, NULL, NULL);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, handle_ip_event, NULL, NULL);
+    err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, NULL, NULL);
+    if (err != ESP_OK) return err;
+    err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, handle_ip_event, NULL, NULL);
+    if (err != ESP_OK) return err;
 
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) return err;
@@ -179,9 +208,13 @@ esp_err_t svc_net_wifi_start(svc_net_mode_t mode)
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
     if (mode == SVC_NET_MODE_OFF) return svc_net_wifi_stop();
 
-    wifi_mode_t m = WIFI_MODE_STA;
-    if (mode == SVC_NET_MODE_AP) m = WIFI_MODE_AP;
-    else if (mode == SVC_NET_MODE_STA_AP) m = WIFI_MODE_APSTA;
+    /* 只实现了 STA：AP / STA_AP 没有配置热点参数，不能假装支持 */
+    if (mode == SVC_NET_MODE_AP || mode == SVC_NET_MODE_STA_AP) {
+        ESP_LOGW(TAG, "AP mode not supported yet");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    const wifi_mode_t m = WIFI_MODE_STA;
 
     /* 已经在同一模式下运行就不重复 start（避免刷日志与多余的 IDF 调用） */
     if (s_started && s_mode == m) return ESP_OK;
@@ -209,7 +242,10 @@ esp_err_t svc_net_wifi_stop(void)
     s_started = false;
     s_mode = WIFI_MODE_NULL;
     s_connecting = false;
+
+    status_lock();
     s_status.wifi_connected = false;
+    status_unlock();
 
     return esp_wifi_stop();
 }
@@ -360,7 +396,9 @@ esp_err_t svc_net_wifi_forget(void)
     esp_wifi_stop();
     s_started = false;
 
+    status_lock();
     memset(&s_status, 0, sizeof(s_status));
+    status_unlock();
 
     ESP_LOGI(TAG, "saved credentials cleared");
     return ESP_OK;
@@ -388,7 +426,10 @@ esp_err_t svc_net_smartconfig_stop(void)
 esp_err_t svc_net_get_status(svc_net_status_t *status)
 {
     if (status == NULL) return ESP_ERR_INVALID_ARG;
-    *status = s_status;
+
+    status_lock();
+    *status = s_status;          /* 快照拷贝，避免读到写一半的状态 */
+    status_unlock();
     return ESP_OK;
 }
 
@@ -409,13 +450,35 @@ esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t
         return err;
     }
 
-    esp_http_client_fetch_headers(c);
-    int rd = esp_http_client_read(c, resp_buf, (int)buf_len - 1);
-    if (rd < 0) {
-        err = ESP_FAIL;
-    } else {
-        resp_buf[rd] = '\0';
-        err = ESP_OK;
+    if (esp_http_client_fetch_headers(c) < 0) {
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+        return ESP_FAIL;
+    }
+
+    int status = esp_http_client_get_status_code(c);
+    if (status < 200 || status >= 300) {
+        ESP_LOGW(TAG, "HTTP %d: %s", status, url);
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /* 循环读到缓冲满：单次 read 可能只返回一部分 */
+    size_t total = 0;
+    err = ESP_OK;
+    while (total < buf_len - 1) {
+        int rd = esp_http_client_read(c, resp_buf + total, (int)(buf_len - 1 - total));
+        if (rd < 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        if (rd == 0) break;                      /* 数据读完 */
+        total += (size_t)rd;
+    }
+    resp_buf[total] = '\0';
+    if (total == buf_len - 1) {
+        ESP_LOGW(TAG, "response truncated to %u bytes", (unsigned)total);
     }
 
     esp_http_client_close(c);
@@ -440,11 +503,23 @@ esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_
 
     esp_err_t err = esp_http_client_perform(c);
     if (err == ESP_OK) {
-        int rd = esp_http_client_read_response(c, resp_buf, (int)buf_len - 1);
-        if (rd < 0) {
-            err = ESP_FAIL;
+        int status = esp_http_client_get_status_code(c);
+        if (status < 200 || status >= 300) {
+            ESP_LOGW(TAG, "HTTP %d: %s", status, url);
+            err = ESP_ERR_INVALID_RESPONSE;
         } else {
-            resp_buf[rd] = '\0';
+            size_t total = 0;
+            while (total < buf_len - 1) {
+                int rd = esp_http_client_read_response(c, resp_buf + total,
+                                                       (int)(buf_len - 1 - total));
+                if (rd < 0) {
+                    err = ESP_FAIL;
+                    break;
+                }
+                if (rd == 0) break;
+                total += (size_t)rd;
+            }
+            resp_buf[total] = '\0';
         }
     }
 

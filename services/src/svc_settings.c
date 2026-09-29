@@ -124,6 +124,8 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
 {
     if (buf == NULL || len == 0) return ESP_ERR_INVALID_ARG;
 
+    buf[0] = '\0';   /* 任何失败路径都保证是空串，避免上层读到未初始化内容 */
+
     nvs_handle_t h;
     esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
     if (err != ESP_OK) {
@@ -134,12 +136,10 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
     size_t l = len;
     err = nvs_get_str(h, key, buf, &l);
     nvs_close(h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
+    if (err != ESP_OK) {
         if (def) strlcpy(buf, def, len);
-        return ESP_OK;
+        else     buf[0] = '\0';
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
     }
-    if (err != ESP_OK && def) {
-        strlcpy(buf, def, len);
-    }
-    return err;
+    return ESP_OK;
 }

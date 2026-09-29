@@ -9,6 +9,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "svc.event_bus";
@@ -31,6 +32,7 @@ typedef struct {
 } svc_queued_t;
 
 static svc_sub_t s_subs[SVC_EVENT_MAX_SUBS];
+static SemaphoreHandle_t s_mux = NULL;   /* 保护 s_subs（订阅可来自任意任务） */
 static QueueHandle_t s_queue = NULL;
 static TaskHandle_t s_task = NULL;
 static StaticTask_t s_task_buffer;
@@ -52,10 +54,25 @@ static void event_bus_dispatch_task(void *arg)
             .data_len = qevt.data_len,
         };
 
-        for (int i = 0; i < SVC_EVENT_MAX_SUBS; i++) {
-            if (s_subs[i].used && s_subs[i].id == qevt.id && s_subs[i].handler != NULL) {
-                s_subs[i].handler(&evt, s_subs[i].user);
+        /* 先持锁取一份订阅快照，再在锁外回调：这样回调里退订/订阅既不会死锁，
+         * 也不会因为遍历中途被改而漏发 */
+        svc_event_handler_t handlers[SVC_EVENT_MAX_SUBS];
+        void *users[SVC_EVENT_MAX_SUBS];
+        int n = 0;
+
+        if (s_mux != NULL && xSemaphoreTake(s_mux, portMAX_DELAY) == pdTRUE) {
+            for (int i = 0; i < SVC_EVENT_MAX_SUBS; i++) {
+                if (s_subs[i].used && s_subs[i].id == qevt.id && s_subs[i].handler != NULL) {
+                    handlers[n] = s_subs[i].handler;
+                    users[n] = s_subs[i].user;
+                    n++;
+                }
             }
+            xSemaphoreGive(s_mux);
+        }
+
+        for (int i = 0; i < n; i++) {
+            handlers[i](&evt, users[i]);
         }
     }
 }
@@ -63,6 +80,11 @@ static void event_bus_dispatch_task(void *arg)
 esp_err_t svc_event_bus_init(void)
 {
     if (s_task != NULL) return ESP_OK;
+
+    if (s_mux == NULL) {
+        s_mux = xSemaphoreCreateMutex();
+        if (s_mux == NULL) return ESP_ERR_NO_MEM;
+    }
 
     s_queue = xQueueCreate(SVC_EVENT_QUEUE_LEN, sizeof(svc_queued_t));
     if (s_queue == NULL) return ESP_ERR_NO_MEM;
@@ -80,28 +102,52 @@ esp_err_t svc_event_bus_init(void)
 esp_err_t svc_event_bus_subscribe(svc_event_id_t id, svc_event_handler_t h, void *user_data)
 {
     if (h == NULL) return ESP_ERR_INVALID_ARG;
+    if (s_mux == NULL || xSemaphoreTake(s_mux, portMAX_DELAY) != pdTRUE) return ESP_ERR_INVALID_STATE;
 
+    esp_err_t ret = ESP_ERR_NO_MEM;
+
+    /* 同一 (id, handler, user_data) 只登记一次，避免重复回调 */
     for (int i = 0; i < SVC_EVENT_MAX_SUBS; i++) {
-        if (!s_subs[i].used) {
-            s_subs[i].used = true;
-            s_subs[i].id = id;
-            s_subs[i].handler = h;
-            s_subs[i].user = user_data;
-            return ESP_OK;
+        if (s_subs[i].used && s_subs[i].id == id &&
+            s_subs[i].handler == h && s_subs[i].user == user_data) {
+            ret = ESP_OK;
+            break;
         }
     }
-    return ESP_ERR_NO_MEM;
+
+    if (ret != ESP_OK) {
+        for (int i = 0; i < SVC_EVENT_MAX_SUBS; i++) {
+            if (!s_subs[i].used) {
+                s_subs[i].used = true;
+                s_subs[i].id = id;
+                s_subs[i].handler = h;
+                s_subs[i].user = user_data;
+                ret = ESP_OK;
+                break;
+            }
+        }
+    }
+
+    xSemaphoreGive(s_mux);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "subscription table full (%d)", SVC_EVENT_MAX_SUBS);
+    }
+    return ret;
 }
 
 esp_err_t svc_event_bus_unsubscribe(svc_event_id_t id, svc_event_handler_t h)
 {
+    if (s_mux == NULL || xSemaphoreTake(s_mux, portMAX_DELAY) != pdTRUE) return ESP_ERR_INVALID_STATE;
+
     for (int i = 0; i < SVC_EVENT_MAX_SUBS; i++) {
         if (s_subs[i].used && s_subs[i].id == id &&
             (h == NULL || s_subs[i].handler == h)) {
             s_subs[i].used = false;
-            if (h != NULL) return ESP_OK;
+            if (h != NULL) break;          /* 指定 handler 时只删掉第一条 */
         }
     }
+
+    xSemaphoreGive(s_mux);
     return ESP_OK;
 }
 
@@ -115,16 +161,26 @@ static esp_err_t event_bus_post(svc_event_id_t id, const void *data, uint32_t le
 
     if (data != NULL && len > 0) {
         uint32_t n = (len > SVC_EVENT_DATA_MAX) ? SVC_EVENT_DATA_MAX : len;
+        if (n < len) {
+            ESP_LOGW(TAG, "event %d payload truncated: %u -> %u",
+                     (int)id, (unsigned)len, (unsigned)n);
+        }
         memcpy(qevt.data, data, n);
         qevt.data_len = n;
     }
 
     if (from_isr) {
         BaseType_t hp = pdFALSE;
-        xQueueSendFromISR(s_queue, &qevt, &hp);
+        if (xQueueSendFromISR(s_queue, &qevt, &hp) != pdTRUE) {
+            return ESP_FAIL;                 /* 队列满；ISR 里不打日志 */
+        }
         if (hp) portYIELD_FROM_ISR();
-    } else {
-        xQueueSend(s_queue, &qevt, 0);
+        return ESP_OK;
+    }
+
+    if (xQueueSend(s_queue, &qevt, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "queue full, event %d dropped", (int)id);
+        return ESP_ERR_TIMEOUT;
     }
     return ESP_OK;
 }

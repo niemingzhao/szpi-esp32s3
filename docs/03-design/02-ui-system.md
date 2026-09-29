@@ -43,7 +43,6 @@ UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封�
 
 ```c
 esp_err_t fw_statusbar_init(void);
-esp_err_t fw_statusbar_set_time(const char *time);     // "10:30"
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);
 esp_err_t fw_statusbar_set_music_playing(bool on);
 esp_err_t fw_statusbar_set_bluetooth(bool on);
@@ -175,12 +174,13 @@ python tools/check_ui_colors.py
 ### 5.2 字体
 
 ```c
-LV_FONT_DECLARE(font_alipuhui20);   // 中文 20 px
+LV_FONT_DECLARE(font_cn14);        // 中文 14 px 正文（回退 font_cn_extra）
+LV_FONT_DECLARE(font_cn16);        // 中文 16 px 标题
 
-// LVGL 内置
+// LVGL 内置（拉丁与数字）
+//   lv_font_montserrat_14
 //   lv_font_montserrat_20
 //   lv_font_montserrat_24
-//   lv_font_montserrat_32
 ```
 
 ### 5.3 接口
@@ -273,14 +273,13 @@ const fw_app_desc_t app_home_desc = {
 
 ```
 开机:
-  1. 全屏黑屏
-  2. SZPI-OS Logo 缩放淡入 (300 ms)
-  3. Logo 旋转一圈 (500 ms)
-  4. 缩放淡出 (300 ms)
-  5. 进入桌面
+  1. 隐藏状态栏等全局浮层，切到全屏黑底
+  2. 居中显示立创官方 120×120 Logo（静态展示）
+  3. 解除静音后等功放稳定，再播一声 1 kHz / 300 ms 提示音（全程约 1.35 s）
+  4. 恢复浮层，由 main 切到桌面
 ```
 
-实现：`fw_boot_animation()` 单独函数，启动时调用，不依赖 framework。
+实现：`fw_boot_animation()`，用 `fw_asset` 的 Logo 资源与 `svc_audio` 的提示音接口。
 
 ## 10. 通用交互模式
 

@@ -3,8 +3,8 @@
  *
  * Framework - Boot Animation
  *
- * 启动动画：黑屏 → Logo 缩放淡入 300 ms → 旋转 500 ms → 淡出 300 ms。
- * 只依赖 LVGL 与主题 / 资源，不依赖其他 framework 模块。
+ * 开机画面：全屏黑底 + 立创官方 Logo 静态展示，同时播一声提示音。
+ * 依赖 LVGL、fw_asset 的 Logo 资源与 svc_audio 的提示音接口。
  */
 
 #pragma once
@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 /**
- * @brief 播放启动动画并阻塞至结束（最坏 ~1.1 s）
+ * @brief 播放开机画面并阻塞至结束（约 1.35 s）
  */
 esp_err_t fw_boot_animation(void);
 

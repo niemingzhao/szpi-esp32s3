@@ -263,7 +263,13 @@ static void scan_cb(lv_event_t *e)
     (void)e;
     if (s_scanning) return;
 
-    svc_net_wifi_start(SVC_NET_MODE_STA);   /* 扫描需要 Wi-Fi 已启动 */
+    /* 扫描需要 Wi-Fi 已启动；启动失败就恢复按钮文案，别让界面停在"扫描中" */
+    esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "wifi start failed: %s", esp_err_to_name(err));
+        if (s_scan_label != NULL) lv_label_set_text(s_scan_label, "扫描");
+        return;
+    }
 
     s_scanning = true;
     if (s_scan_label != NULL) lv_label_set_text(s_scan_label, "扫描中");
@@ -350,8 +356,11 @@ static void connect_cb(lv_event_t *e)
         strlcpy(creds.password, lv_textarea_get_text(s_pass_ta), sizeof(creds.password));
     }
 
-    svc_net_wifi_start(SVC_NET_MODE_STA);
-    esp_err_t err = svc_net_wifi_connect(&creds);
+    esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
+    if (err == ESP_OK) {
+        err = svc_net_wifi_connect(&creds);
+    }
+
     if (s_pass_hint != NULL) {
         lv_label_set_text(s_pass_hint, (err == ESP_OK) ? "连接中…" : esp_err_to_name(err));
     }
@@ -412,8 +421,11 @@ static void bright_cb(lv_event_t *e)
     if (s_bright_sync) return;
     lv_obj_t *s = lv_event_get_target(e);
     uint8_t v = (uint8_t)lv_slider_get_value(s);
-    svc_power_set_brightness(v);
-    if (s_bright_value != NULL) lv_label_set_text_fmt(s_bright_value, "%u%%", (unsigned)v);
+
+    /* 只在真正生效后更新数值标签，避免滑块显示与实际亮度不一致 */
+    if (svc_power_set_brightness(v) == ESP_OK && s_bright_value != NULL) {
+        lv_label_set_text_fmt(s_bright_value, "%u%%", (unsigned)v);
+    }
 }
 
 static void evt_brightness(const svc_event_t *evt, void *user)
@@ -608,13 +620,21 @@ static void *settings_on_create(void)
     return s_root;
 }
 
+/* 订阅失败（订阅表满）只在日志里告警，不影响界面可用性 */
+static void subscribe_or_warn(svc_event_id_t id, svc_event_handler_t h)
+{
+    if (svc_event_bus_subscribe(id, h, NULL) != ESP_OK) {
+        ESP_LOGW(TAG, "subscribe event %d failed", (int)id);
+    }
+}
+
 static void settings_on_start(void *ctx)
 {
     (void)ctx;
-    svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, evt_wifi, NULL);
-    svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECT_FAILED, evt_wifi, NULL);
-    svc_event_bus_subscribe(SVC_EVENT_WIFI_DISCONNECTED, evt_wifi, NULL);
-    svc_event_bus_subscribe(SVC_EVENT_BRIGHTNESS_CHANGED, evt_brightness, NULL);
+    subscribe_or_warn(SVC_EVENT_WIFI_CONNECTED, evt_wifi);
+    subscribe_or_warn(SVC_EVENT_WIFI_CONNECT_FAILED, evt_wifi);
+    subscribe_or_warn(SVC_EVENT_WIFI_DISCONNECTED, evt_wifi);
+    subscribe_or_warn(SVC_EVENT_BRIGHTNESS_CHANGED, evt_brightness);
 
     lvgl_port_lock(0);
     update_wifi_ui();
@@ -654,6 +674,7 @@ static void settings_on_destroy(void *ctx)
         lv_obj_del(s_root);
         s_root = NULL;
         for (int i = 0; i < PAGE_COUNT; i++) s_page[i] = NULL;
+        s_scanning = false;          /* 在途扫描任务可能还在跑，别把标志留在 true */
         s_menu_wifi_label = NULL;
         s_wifi_state = NULL;
         s_ap_list = NULL;

@@ -163,12 +163,12 @@ esp_err_t periph_touch_init(void)
 
     ESP_RETURN_ON_ERROR(drv_ft6336_get_touch_handle(&s_touch), TAG, "touch not initialized");
 
-    s_mutex = xSemaphoreCreateMutex();
-    ESP_RETURN_ON_FALSE(s_mutex != NULL, ESP_ERR_NO_MEM, TAG, "mutex alloc failed");
-
-    /* 注册 LVGL input device（回调只读缓存） */
+    /* 注册 LVGL input device（回调只读缓存）；先确认显示已就绪，再分配互斥量 */
     lv_disp_t *disp = periph_lcd_get_disp();
     ESP_RETURN_ON_FALSE(disp != NULL, ESP_ERR_INVALID_STATE, TAG, "LCD display not ready");
+
+    s_mutex = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(s_mutex != NULL, ESP_ERR_NO_MEM, TAG, "mutex alloc failed");
 
     static lv_indev_drv_t indev_drv;
     if (lvgl_port_lock(0)) {

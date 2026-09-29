@@ -3,8 +3,8 @@
  *
  * Framework - Asset 实现
  *
- * Scope A：字体用 LVGL 内置 Montserrat，图标用 LVGL 内置符号。
- * 后续阶段在此加载中文子集字体与 64x64 PNG 图标资源。
+ * 中文用 Noto Sans SC 14 / 16 px 子集（回退 font_cn_extra），拉丁用 Montserrat；
+ * 图标优先 LVGL 内置符号（App 名称到符号的映射见 fw_asset_symbol_for()）。
  */
 
 #include "fw_common.h"

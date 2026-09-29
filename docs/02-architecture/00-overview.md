@@ -74,10 +74,10 @@ SZPI-OS 的架构满足：
 - `st7789` - LCD 面板驱动
 - `ft6336` - 触摸芯片驱动
 - `qmi8658` - IMU 驱动
+- `i2c` - I2C0 主机总线（新版 i2c_master 驱动）+ 寄存器读写封装
 - `es8311` - 音频 DAC 驱动
 - `es7210` - 音频 ADC 驱动
 - `gc0308` - 摄像头驱动
-- `sd_card` - SDMMC TF 卡驱动
 - `key_gpio0` - BOOT 按键驱动
 - `led_pwm` - LEDC PWM 封装
 
@@ -270,8 +270,8 @@ App 调用 svc_settings_set(key, value)
 1. nvs_flash_init()
 2. Drivers 初始化 bsp_init()：I2C / SPI / LEDC / PCA9557 / ST7789 / FT6336 / BOOT 键 / QMI8658
 3. Peripherals 初始化 peripherals_init_all()：IO / Audio / LCD（含 LVGL display）/ Touch / IMU / Storage / Button
-4. Services 启动：EventBus / Storage / Time / Audio / Net / Power / Notification
-5. Framework 初始化：Theme / Asset / Window / Input / StatusBar / CtrlCenter / NotiCenter / AppMgr
+4. Services 启动：EventBus / Settings / Storage / Time / Audio / Net / Power / Notification
+5. Framework 初始化：Theme / Asset / Window / AppMgr / UI / StatusBar / Notification / ControlCenter / Input
 6. Apps 注册
 7. 显示启动 logo 动画
 8. 启动桌面
@@ -301,8 +301,8 @@ szpi-esp32s3/
 ├── sdkconfig.defaults          # 默认配置
 ├── main/
 │   ├── CMakeLists.txt
-│   ├── main.c                  # app_main()
-│   └── app_register.c          # App 注册表
+│   └── main.c                  # app_main()
+├── apps/                       # Apps 层（含 src/app_register.c：App 注册表）
 ├── drivers/                    # Drivers 层
 │   ├── CMakeLists.txt
 │   ├── include/

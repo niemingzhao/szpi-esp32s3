@@ -59,7 +59,8 @@ esp_err_t svc_time_sync_ntp(void)
         esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(SVC_TIME_NTP_SERVER);
         cfg.sync_cb = time_sync_cb;
         esp_err_t err = esp_netif_sntp_init(&cfg);
-        if (err != ESP_OK) {
+        /* 并发调用时可能已被别的任务初始化，INVALID_STATE 视为成功 */
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "sntp init failed: %s", esp_err_to_name(err));
             return err;
         }

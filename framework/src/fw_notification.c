@@ -3,7 +3,7 @@
  *
  * Framework - Notification Center 实现
  *
- * 由状态栏的“通知”按钮打开，占满状态栏以下的显示区；点遮罩或右上角关闭。
+ * 由状态栏的“通知”按钮打开，占满状态栏以下的显示区，右上角 × 关闭。
  * 订阅 SVC_EVENT_NOTIFICATION_POSTED / DISMISSED 刷新列表，POSTED 时弹 Toast。
  */
 

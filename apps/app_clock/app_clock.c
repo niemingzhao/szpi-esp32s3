@@ -35,7 +35,11 @@ static void refresh(void)
     int64_t now = svc_time_now();
     time_t t = (time_t)now;
     struct tm tmv;
-    localtime_r(&t, &tmv);
+    if (localtime_r(&t, &tmv) == NULL) {
+        lv_label_set_text(s_time, "--:--");
+        lv_label_set_text(s_date, "时间未同步");
+        return;
+    }
 
     static const char *wd[] = { "日", "一", "二", "三", "四", "五", "六" };
     int w = (tmv.tm_wday >= 0 && tmv.tm_wday < 7) ? tmv.tm_wday : 0;

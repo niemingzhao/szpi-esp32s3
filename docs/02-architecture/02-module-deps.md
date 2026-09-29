@@ -130,7 +130,7 @@ fw_app_mgr_launch("Home")    // 启动桌面
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES driver esp_lcd esp_lcd_touch esp_lcd_touch_ft5x06 esp_timer freertos
+    REQUIRES driver esp_driver_i2c esp_lcd esp_lcd_touch esp_lcd_touch_ft5x06 esp_timer freertos
 )
 ```
 
@@ -149,30 +149,28 @@ idf_component_register(
 idf_component_register(
     SRC_DIRS src
     INCLUDE_DIRS include
-    REQUIRES peripherals esp_wifi bt nvs_flash esp_http_client
-    PRIV_REQUIRES drivers freertos json
+    REQUIRES peripherals nvs_flash esp_netif esp_wifi esp_event esp_http_client esp_timer freertos
+    PRIV_REQUIRES drivers
 )
 ```
 
 ```cmake
 # framework/CMakeLists.txt
 idf_component_register(
-    SRC_DIRS src
+    SRC_DIRS src assets
     INCLUDE_DIRS include
-    REQUIRES services lvgl esp_lvgl_port
+    REQUIRES services peripherals lvgl esp_lvgl_port
     PRIV_REQUIRES freertos
 )
 ```
 
 ```cmake
-# apps/CMakeLists.txt
+# apps/CMakeLists.txt（新 App 落地时把目录加进 SRC_DIRS / INCLUDE_DIRS）
 idf_component_register(
-    SRC_DIRS app_clock app_settings app_music app_recorder app_image
-              app_video app_camera app_file app_editor app_calc
-              app_imu app_ble app_browser app_ota app_debug app_about app_factory
-    INCLUDE_DIRS .
-    REQUIRES framework services
-    PRIV_REQUIRES freertos json
+    SRC_DIRS src app_home app_clock app_settings
+    INCLUDE_DIRS include app_home app_clock app_settings
+    REQUIRES framework services lvgl esp_lvgl_port heap esp_hw_support
+    PRIV_REQUIRES freertos
 )
 ```
 

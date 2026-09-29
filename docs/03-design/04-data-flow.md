@@ -166,7 +166,7 @@
         ▼
 [svc_notification 内部：分配 ID，存入列表]
         │
-        ├─→ 立即在屏幕顶部弹出 toast（3 秒后消失）
+        ├─→ 立即在屏幕底部弹出 toast（默认 3 秒后消失）
         │
         └─→ 发布 SVC_EVENT_NOTIFICATION_POSTED
               │
@@ -174,13 +174,13 @@
               │
               └─→ fw_notification 监听 → 在通知中心列表中显示
                     │
-                    └─→ 用户下滑屏幕 → 显示通知中心
+                    └─→ 点状态栏"通知"按钮 → 显示通知中心
                           │
                           ├─→ 用户点击通知 → 调用 noti.on_click()
                           │     │
                           │     └─→ 通常是 fw_app_mgr_launch(noti.target_app)
                           │
-                          └─→ 用户滑动删除 → svc_notification_dismiss(id)
+                          └─→ 用户点"清空" → svc_notification_clear_all()
                                 │
                                 └─→ SVC_EVENT_NOTIFICATION_DISMISSED
                                       │
@@ -223,7 +223,7 @@
 [periph_button 任务检测 LONG_PRESS]
         │
         ▼
-[fw_input 全局回调 → fw_show_power_menu()]
+[fw_input 全局回调 → show_power_menu()（fw_input 内部静态函数）]
         │
         ▼
 [LVGL 弹出 power menu 浮层]

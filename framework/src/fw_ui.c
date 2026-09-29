@@ -233,7 +233,10 @@ esp_err_t fw_ui_dialog_close(lv_obj_t *dlg)
 static void toast_timer_cb(lv_timer_t *t)
 {
     lv_obj_t *obj = (lv_obj_t *)t->user_data;
-    if (obj != NULL) lv_obj_del_async(obj);
+    /* 调用方可能提前删掉了 toast：先确认对象还有效，避免用悬空指针 */
+    if (obj != NULL && lv_obj_is_valid(obj)) {
+        lv_obj_del_async(obj);
+    }
 }
 
 lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms)

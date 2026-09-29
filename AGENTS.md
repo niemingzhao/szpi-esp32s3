@@ -72,7 +72,7 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 
 | 目录 | 模块 | 说明 |
 |------|------|------|
-| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、BOOT 按键、LEDC、BSP | 已实现（`es7210`、`gc0308`、SDMMC 独立驱动规划中） |
+| `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、`i2c`、BOOT 按键、LEDC、BSP | 已实现（`es7210`、`gc0308` 规划中；TF 卡的 sdmmc/fatfs 挂载由 Peripherals 层的 `periph_storage` 直接用 IDF 组件完成，不单独设驱动） |
 | `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO/Audio 已实现（音频仅播放）；Camera 未包含 |
 | `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | event_bus / settings / storage / time / power / notification 已实现；net（Wi-Fi STA + HTTP）与 audio（WAV / tone 播放）已实现；MP3 / 录音 / SmartConfig / MQTT / WS / OTA 未实现 |
 | `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（状态栏集成返回 / 主页 / 通知 / 控制中心按钮；中文由 assets 的 Noto 子集 14/16 px 渲染；开机画面用官方 Logo + 提示音） |
@@ -171,6 +171,8 @@ python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --sizes 14,16
 ### 4.10 点亮背光前必须先清屏
 
 ST7789 的 GRAM 掉电 / 复位后不会自动清空。若先开背光再等 LVGL 首帧，会短暂显示**上一次运行残留在面板里的画面**（表现为开机"先闪一下主页"）。`periph_lcd_init()` 在设置背光前先 `periph_lcd_fill(0x0000)` 整屏清黑。
+
+复位与 CS 时序**不要动**：本板面板 RST 是 NC，官方例程的顺序是"先 `esp_lcd_panel_reset()`（此时 CS 仍为高）→ 再拉低 CS → 再 `esp_lcd_panel_init()`"。曾把"拉低 CS"挪到复位之前，SWRESET 就真正生效了，而 ST7789 复位后需要约 120 ms 才能接受新命令（IDF 内部只等 20 ms），随后的初始化命令被丢弃——表现是**开机只有背光、没有画面**。
 
 ### 4.11 开机提示音要先打成功放
 

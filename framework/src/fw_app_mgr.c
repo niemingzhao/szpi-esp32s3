@@ -5,7 +5,7 @@
  *
  * 返回栈模型：栈底为 Home。launch() 把目标 App 压栈并暂停原前台 App；
  * back() 弹栈并恢复上一个 App。App 在后台保留其 LVGL 资源（on_pause /
- * on_resume），只有 fw_app_mgr_close() 才真正 on_destroy。
+ * on_resume），只有 fw_app_mgr_close() 与换主题时的 rebuild_all() 才 on_destroy。
  */
 
 #include "fw_common.h"
@@ -115,6 +115,13 @@ esp_err_t fw_app_mgr_launch(const char *name)
         return ESP_OK;
     }
 
+    /* 栈满要在动任何状态之前检查：否则会把目标 App 创建出来却压不进栈 */
+    if (s_top + 1 >= FW_APP_STACK_MAX) {
+        lvgl_port_unlock();
+        ESP_LOGW(TAG, "app stack full (%d)", FW_APP_STACK_MAX);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     if (s_top >= 0) {
         slot_pause(s_stack[s_top]);
     }
@@ -136,10 +143,6 @@ esp_err_t fw_app_mgr_launch(const char *name)
         a->created = true;
     }
 
-    if (s_top + 1 >= FW_APP_STACK_MAX) {
-        lvgl_port_unlock();
-        return ESP_ERR_NO_MEM;
-    }
     s_stack[++s_top] = idx;
     a->active = true;
 
@@ -291,13 +294,30 @@ esp_err_t fw_app_mgr_rebuild_all(void)
     }
 
     /* 重建当前前台 App：先 on_pause 退订，避免 on_start 里重复订阅 */
+    lv_obj_t *target = NULL;
     if (s_top >= 0) {
         fw_app_slot_t *a = &s_slots[s_stack[s_top]];
         if (a->created) {
             if (a->desc->on_pause != NULL) a->desc->on_pause(a->ctx);
             if (a->desc->on_start != NULL) a->desc->on_start(a->ctx);
-            if (a->root != NULL) fw_window_switch_to(a->root, LV_SCR_LOAD_ANIM_NONE, 0);
+            target = a->root;
         }
+    }
+
+    /* 当前 App 重建失败时退到第一个重建成功的 App，别把临时屏留在前台 */
+    if (target == NULL) {
+        for (size_t i = 0; i < s_count; i++) {
+            if (s_slots[i].created && s_slots[i].root != NULL) {
+                ESP_LOGW(TAG, "current app missing after rebuild, fallback to %s",
+                         s_slots[i].desc->name);
+                target = s_slots[i].root;
+                break;
+            }
+        }
+    }
+
+    if (target != NULL) {
+        fw_window_switch_to(target, LV_SCR_LOAD_ANIM_NONE, 0);
     }
 
     /* 只有它不再是前台屏时才删除（禁止删除活动屏） */

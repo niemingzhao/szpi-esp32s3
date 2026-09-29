@@ -5,6 +5,7 @@
  */
 
 #include "fw_common.h"
+#include "esp_lvgl_port.h"
 #include "esp_log.h"
 
 static const char *TAG = "fw.window";
@@ -13,7 +14,9 @@ static lv_obj_t *s_active = NULL;
 
 esp_err_t fw_window_init(void)
 {
+    lvgl_port_lock(0);
     s_active = lv_scr_act();
+    lvgl_port_unlock();
     ESP_LOGI(TAG, "initialized");
     return ESP_OK;
 }

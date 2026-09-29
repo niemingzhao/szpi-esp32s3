@@ -8,7 +8,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-static const char *TAG = "services";
+static const char *TAG = "svc.init";
 
 esp_err_t services_init(void)
 {

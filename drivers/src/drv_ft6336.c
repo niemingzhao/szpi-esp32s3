@@ -44,6 +44,7 @@ esp_err_t drv_ft6336_init(void)
 
 esp_err_t drv_ft6336_get_touch_handle(esp_lcd_touch_handle_t *out_handle)
 {
+    if (out_handle == NULL) return ESP_ERR_INVALID_ARG;
     if (s_touch_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }

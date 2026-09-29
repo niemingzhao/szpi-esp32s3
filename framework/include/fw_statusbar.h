@@ -31,11 +31,6 @@ esp_err_t fw_statusbar_init(void);
 esp_err_t fw_statusbar_rebuild(void);
 
 /**
- * @brief 设置时间文本（如 "10:30"）
- */
-esp_err_t fw_statusbar_set_time(const char *time);
-
-/**
  * @brief 设置 Wi-Fi 图标
  */
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);

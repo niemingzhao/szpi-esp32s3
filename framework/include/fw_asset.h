@@ -4,8 +4,8 @@
  * Framework - Asset
  *
  * 统一资源入口：字体与图标。
- * Scope A 只提供 LVGL 内置字体与内置符号图标；中文子集字体与 64x64
- * PNG 图标资源在后续阶段通过本模块加载，调用方不改。
+ * 中文用 Noto Sans SC 子集（14 / 16 px，含 GB2312 回退字体），拉丁用 Montserrat，
+ * 图标优先 LVGL 内置符号；App 专用 64x64 图标资源也从这里取。
  */
 
 #pragma once

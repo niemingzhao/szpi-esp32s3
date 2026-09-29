@@ -13,8 +13,9 @@
 
 static const char *TAG = "drv.i2c";
 
-#define DRV_I2C_TIMEOUT_MS   1000
-#define DRV_I2C_MAX_WRITE    8      /* 寄存器地址 + 最多 7 字节数据 */
+#define DRV_I2C_TIMEOUT_MS        1000
+#define DRV_I2C_PROBE_TIMEOUT_MS  200
+#define DRV_I2C_MAX_WRITE         8      /* 寄存器地址 + 最多 7 字节数据 */
 
 static i2c_master_bus_handle_t s_bus = NULL;
 
@@ -69,7 +70,7 @@ esp_err_t drv_i2c_device_add(uint16_t dev_addr, uint32_t scl_speed_hz,
     }
 
     /* 探测一下：没应答时给出明确告警，省得到处查"为什么读不到数据" */
-    if (i2c_master_probe(s_bus, dev_addr, 200) != ESP_OK) {
+    if (i2c_master_probe(s_bus, dev_addr, DRV_I2C_PROBE_TIMEOUT_MS) != ESP_OK) {
         ESP_LOGW(TAG, "device 0x%02X not responding", dev_addr);
     }
     return ESP_OK;

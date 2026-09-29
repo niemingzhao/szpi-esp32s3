@@ -55,6 +55,15 @@ static esp_err_t qmi8658_read_buf(uint8_t reg, uint8_t *data, size_t len)
     return drv_i2c_read_reg(s_dev, reg, data, len);
 }
 
+/* 失败时把设备从总线上摘掉，避免重复 init 时重复挂设备 */
+static void qmi8658_release_device(void)
+{
+    if (s_dev != NULL) {
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
+    }
+}
+
 esp_err_t drv_qmi8658_init(void)
 {
     if (s_initialized) {
@@ -70,10 +79,12 @@ esp_err_t drv_qmi8658_init(void)
     uint8_t whoami = 0;
     if (qmi8658_read_buf(QMI8658_REG_WHO_AM_I, &whoami, 1) != ESP_OK) {
         ESP_LOGW(TAG, "QMI8658 not responding");
+        qmi8658_release_device();
         return ESP_FAIL;
     }
     if (whoami != QMI8658_WHO_AM_I_VALUE) {
         ESP_LOGW(TAG, "QMI8658 unexpected WHO_AM_I: 0x%02x", whoami);
+        qmi8658_release_device();
         return ESP_FAIL;
     }
 

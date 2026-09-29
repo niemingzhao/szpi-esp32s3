@@ -14,7 +14,7 @@
 #include "fw_common.h"
 #include "esp_log.h"
 
-static const char *TAG = "app";
+static const char *TAG = "app.registry";
 
 void app_register_all(void)
 {

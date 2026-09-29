@@ -7,7 +7,7 @@
 #include "periph_common.h"
 #include "esp_log.h"
 
-static const char *TAG = "peripherals";
+static const char *TAG = "periph.init";
 
 esp_err_t peripherals_init_all(void)
 {

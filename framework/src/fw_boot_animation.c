@@ -4,7 +4,8 @@
  * Framework - Boot Animation 实现
  *
  * 开机画面：全屏黑底 + 立创官方 120x120 Logo（静态展示），
- * 同时播放 C5-E5-G5-C6 琶音提示音，展示结束后才进入桌面。
+ * 同时播放一声 1 kHz / 300 ms 提示音（先解除静音并等功放稳定），
+ * 展示结束后由 main 切到桌面。
  */
 
 #include "fw_boot_animation.h"
@@ -59,7 +60,8 @@ esp_err_t fw_boot_animation(void)
     lvgl_port_lock(0);
     lv_obj_clear_flag(lv_layer_top(), LV_OBJ_FLAG_HIDDEN);
     if (prev != NULL) lv_scr_load(prev);
-    lv_obj_del(scr);
+    /* 绝不当场删除活动屏（见 AGENTS 4.13） */
+    if (lv_scr_act() != scr) lv_obj_del(scr);
     lvgl_port_unlock();
 
     ESP_LOGI(TAG, "done");

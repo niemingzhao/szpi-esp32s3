@@ -220,6 +220,7 @@ static esp_err_t play_tone(uint16_t freq, uint32_t ms)
     int16_t *pcm = (int16_t *)buf;
     uint32_t done = 0;
 
+    bool ok = true;
     while (done < total && !s_stop_req) {
         uint32_t n = total - done;
         if (n > AUDIO_CHUNK / 4) n = AUDIO_CHUNK / 4;
@@ -230,15 +231,22 @@ static esp_err_t play_tone(uint16_t freq, uint32_t ms)
             pcm[2 * i + 1] = v;
         }
 
-        if (periph_audio_write(buf, n * 4, 0) != ESP_OK) break;
+        if (periph_audio_write(buf, n * 4, 0) != ESP_OK) {
+            ok = false;
+            break;
+        }
         done += n;
     }
 
     free(buf);
     periph_audio_set_mute(true);
+
+    if (!ok) {
+        svc_event_bus_publish(SVC_EVENT_AUDIO_PLAYBACK_ERROR, NULL, 0);
+    }
     enter_state(SVC_AUDIO_STATE_IDLE);
     svc_event_bus_publish(SVC_EVENT_AUDIO_PLAYBACK_FINISHED, NULL, 0);
-    return ESP_OK;
+    return ok ? ESP_OK : ESP_FAIL;
 }
 
 /* -------------------------------- play_task -------------------------------- */
@@ -286,7 +294,11 @@ esp_err_t svc_audio_init(void)
 
     BaseType_t ok = xTaskCreatePinnedToCore(audio_task, "svc_audio", AUDIO_TASK_STACK, NULL,
                                             AUDIO_TASK_PRIO, &s_task, AUDIO_TASK_CORE);
-    if (ok != pdPASS) return ESP_ERR_NO_MEM;
+    if (ok != pdPASS) {
+        vQueueDelete(s_queue);
+        s_queue = NULL;
+        return ESP_ERR_NO_MEM;
+    }
 
     s_ready = true;
     ESP_LOGI(TAG, "initialized");
@@ -295,8 +307,20 @@ esp_err_t svc_audio_init(void)
 
 esp_err_t svc_audio_deinit(void)
 {
-    s_stop_req = true;
-    s_pause_req = false;
+    s_ready = false;
+    s_stop_req = true;                    /* 让正在播的内容尽快退出 */
+
+    if (s_task != NULL) {
+        vTaskDelete(s_task);              /* 任务阻塞在队列上，直接删除 */
+        s_task = NULL;
+    }
+    if (s_queue != NULL) {
+        vQueueDelete(s_queue);
+        s_queue = NULL;
+    }
+
+    enter_state(SVC_AUDIO_STATE_IDLE);
+    ESP_LOGI(TAG, "deinitialized");
     return ESP_OK;
 }
 

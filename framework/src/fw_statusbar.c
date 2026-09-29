@@ -116,21 +116,11 @@ static lv_obj_t *make_bar_icon(lv_obj_t *parent, const char *symbol, lv_align_t 
 
 /* ------------------------------- 状态 setter ------------------------------- */
 
-esp_err_t fw_statusbar_set_time(const char *time)
-{
-    lvgl_port_lock(0);
-    if (s_time != NULL && time != NULL) {
-        lv_label_set_text(s_time, time);
-    }
-    lvgl_port_unlock();
-    return ESP_OK;
-}
-
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected)
 {
     (void)rssi;
-    s_wifi_on = connected;
     lvgl_port_lock(0);
+    s_wifi_on = connected;
     if (s_wifi != NULL) {
         lv_obj_set_style_text_color(s_wifi,
                                     connected ? fw_theme_color_text_primary()
@@ -143,8 +133,8 @@ esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected)
 
 esp_err_t fw_statusbar_set_music_playing(bool on)
 {
-    s_music_on = on;
     lvgl_port_lock(0);
+    s_music_on = on;
     if (s_music != NULL) {
         if (on) lv_obj_clear_flag(s_music, LV_OBJ_FLAG_HIDDEN);
         else    lv_obj_add_flag(s_music, LV_OBJ_FLAG_HIDDEN);

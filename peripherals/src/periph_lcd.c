@@ -5,7 +5,7 @@
  *
  * 职责：
  *   - 基于 drv_st7789 输出的 panel / io handle 初始化 LVGL display
- *   - 背光亮度控制 + NVS 持久化（namespace sys / key brightness）
+ *   - 背光亮度控制（亮度的持久化由 Services 层 svc_power 负责）
  *
  * 说明：LCD 面板的硬件初始化由 Drivers 层 bsp_init() 完成，
  *       本模块只负责 LVGL 集成与业务级亮度接口。
@@ -18,44 +18,16 @@
 #include "esp_lvgl_port.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_heap_caps.h"
-#include "nvs_flash.h"
 
 static const char *TAG = "periph.lcd";
 
-#define NVS_NS "sys"
-#define NVS_KEY_BRIGHTNESS "brightness"
+#define PERIPH_LCD_DEFAULT_BRIGHTNESS 80
 
 #define LVGL_BUFFER_LINES 20
 
 static bool s_initialized = false;
-static uint8_t s_brightness = 80;
+static uint8_t s_brightness = PERIPH_LCD_DEFAULT_BRIGHTNESS;
 static lv_disp_t *s_disp = NULL;
-
-static esp_err_t load_brightness(void)
-{
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
-    if (err != ESP_OK) return err;
-
-    uint8_t val = s_brightness;
-    size_t len = sizeof(val);
-    err = nvs_get_blob(h, NVS_KEY_BRIGHTNESS, &val, &len);
-    if (err == ESP_OK) s_brightness = val;
-    nvs_close(h);
-    return ESP_OK;
-}
-
-static esp_err_t save_brightness(uint8_t val)
-{
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) return err;
-    err = nvs_set_blob(h, NVS_KEY_BRIGHTNESS, &val, sizeof(val));
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err;
-}
 
 esp_err_t periph_lcd_init(void)
 {
@@ -100,11 +72,14 @@ esp_err_t periph_lcd_init(void)
     }
 
     /* 3. 点亮背光前先整屏清黑：ST7789 GRAM 掉电/复位后不会自动清空，
-     *    否则背光一亮会先显示上一次运行残留在面板里的画面 */
-    periph_lcd_fill(0x0000);
+     *    否则背光一亮会先显示上一次运行残留在面板里的画面。
+     *    此时 LVGL 任务已在跑，必须持锁，避免与 LVGL 的 flush 争用 panel IO */
+    if (lvgl_port_lock(0)) {
+        periph_lcd_fill(0x0000);
+        lvgl_port_unlock();
+    }
 
-    /* 4. 背光：加载 NVS 中保存的亮度并应用 */
-    load_brightness();
+    /* 4. 背光：先用默认亮度点亮，Services 层会随后套用持久化的值 */
     drv_ledc_set_brightness(s_brightness);
 
     s_initialized = true;
@@ -133,7 +108,6 @@ esp_err_t periph_lcd_set_brightness(uint8_t percent)
     if (percent > 100) percent = 100;
     s_brightness = percent;
     drv_ledc_set_brightness(percent);
-    save_brightness(percent);
     return ESP_OK;
 }
 

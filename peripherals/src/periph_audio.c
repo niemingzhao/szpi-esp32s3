@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "driver/i2s_std.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "periph.audio";
@@ -27,16 +28,13 @@ static const char *TAG = "periph.audio";
 #define PERIPH_AUDIO_MCLK_MULT   256
 
 static uint8_t s_volume = 80;
-static bool s_muted = false;
 static bool s_initialized = false;
 static bool s_tx_enabled = false;
 
 static i2s_chan_handle_t s_tx = NULL;
 static uint32_t s_sample_rate = 0;
-
-static periph_audio_format_t s_fmt_play = {
-    .sample_rate = PERIPH_AUDIO_SR_16K, .bit_width = 16, .channels = 2,
-};
+/* ES8311 的寄存器配置会被播放任务（采样率）与 UI 任务（音量 / 静音）同时调用，串行化 */
+static SemaphoreHandle_t s_cfg_mux = NULL;
 
 /* 采样率变化时重配 I2S 时钟与 ES8311 */
 static esp_err_t audio_apply_clock(uint32_t sample_rate)
@@ -55,24 +53,36 @@ static esp_err_t audio_apply_clock(uint32_t sample_rate)
     }
 
     esp_err_t err = i2s_channel_reconfig_std_clock(s_tx, &clk);
-    if (err != ESP_OK) return err;
+    if (err == ESP_OK) {
+        if (s_cfg_mux != NULL) xSemaphoreTake(s_cfg_mux, portMAX_DELAY);
+        err = drv_es8311_set_sample_rate(sample_rate);
+        if (s_cfg_mux != NULL) xSemaphoreGive(s_cfg_mux);
 
-    err = drv_es8311_set_sample_rate(sample_rate);
-    if (err != ESP_OK) return err;
+        if (err == ESP_OK) {
+            s_sample_rate = sample_rate;
+        }
+    }
 
-    s_sample_rate = sample_rate;
-
+    /* 失败也要把通道恢复到"可用"状态，否则后续播放会一直失败 */
     if (was_enabled) {
-        err = i2s_channel_enable(s_tx);
-        if (err != ESP_OK) return err;
+        esp_err_t re = i2s_channel_enable(s_tx);
+        if (re != ESP_OK) {
+            ESP_LOGE(TAG, "re-enable TX failed: %s", esp_err_to_name(re));
+            return re;
+        }
         s_tx_enabled = true;
     }
-    return ESP_OK;
+    return err;
 }
 
 esp_err_t periph_audio_init(void)
 {
     if (s_initialized) return ESP_OK;
+
+    if (s_cfg_mux == NULL) {
+        s_cfg_mux = xSemaphoreCreateMutex();
+        if (s_cfg_mux == NULL) return ESP_ERR_NO_MEM;
+    }
 
     drv_pca9557_set_pin(DRV_PCA9557_PA_EN, 0);   // PA 默认关闭
 
@@ -152,13 +162,18 @@ esp_err_t periph_audio_set_format(periph_audio_dir_t dir, const periph_audio_for
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+    /* I2S slot 固定 16-bit 立体声；单声道数据由调用方（svc_audio）复制成双声道 */
+    if (fmt->bit_width != 16 || fmt->channels == 0 || fmt->channels > 2) {
+        ESP_LOGE(TAG, "unsupported format: %u bit / %u ch", fmt->bit_width, fmt->channels);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
     esp_err_t err = audio_apply_clock((uint32_t)fmt->sample_rate);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "apply clock failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    s_fmt_play = *fmt;
     ESP_LOGI(TAG, "format set: sr=%u bits=%u ch=%u",
              (unsigned)fmt->sample_rate, fmt->bit_width, fmt->channels);
     return ESP_OK;
@@ -170,7 +185,11 @@ esp_err_t periph_audio_set_volume(uint8_t percent)
     s_volume = percent;
 
     if (!s_initialized) return ESP_OK;
-    return drv_es8311_set_volume(percent);
+
+    if (s_cfg_mux != NULL) xSemaphoreTake(s_cfg_mux, portMAX_DELAY);
+    esp_err_t err = drv_es8311_set_volume(percent);
+    if (s_cfg_mux != NULL) xSemaphoreGive(s_cfg_mux);
+    return err;
 }
 
 uint8_t periph_audio_get_volume(void)
@@ -180,13 +199,15 @@ uint8_t periph_audio_get_volume(void)
 
 esp_err_t periph_audio_set_mute(bool mute)
 {
-    s_muted = mute;
-
     drv_pca9557_set_pin(DRV_PCA9557_PA_EN, mute ? 0 : 1);
     if (!s_initialized) return ESP_OK;
 
     ESP_LOGI(TAG, "mute: %s", mute ? "on" : "off");
-    return drv_es8311_set_mute(mute);
+
+    if (s_cfg_mux != NULL) xSemaphoreTake(s_cfg_mux, portMAX_DELAY);
+    esp_err_t err = drv_es8311_set_mute(mute);
+    if (s_cfg_mux != NULL) xSemaphoreGive(s_cfg_mux);
+    return err;
 }
 
 esp_err_t periph_audio_write(const uint8_t *data, size_t len, uint32_t timeout_ms)

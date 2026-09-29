@@ -3,7 +3,7 @@
  *
  * Framework - Control Center
  *
- * 下拉控制中心（全局浮层，默认隐藏）：Wi-Fi 开关、亮度、音量。
+ * 控制中心（全局浮层，默认隐藏）：Wi-Fi 磁贴、亮度、音量、试听。
  */
 
 #pragma once
