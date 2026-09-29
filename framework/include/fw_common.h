@@ -25,9 +25,8 @@
 extern "C" {
 #endif
 
-/** 固件版本与当前层（供日志与关于页使用） */
+/** 固件版本（供启动日志与关于页使用） */
 #define SZPI_OS_VERSION   "v0.5"
-#define SZPI_OS_LAYER     "Services Layer"
 
 /**
  * @brief 初始化 Framework 层

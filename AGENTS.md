@@ -56,7 +56,7 @@ szpi-esp32s3/
 **关键文件说明**：
 
 - `main/main.c` —— v0.5 启动入口：NVS → `bsp_init()`（Drivers 层：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()`（IO / Audio / LCD+LVGL / Touch / IMU / Storage / Button）→ `services_init()`（EventBus / Settings / Storage / Time / Audio / Net / Power / Notification）→ `fw_init()`（Framework 层）→ `app_register_all()` → `fw_app_mgr_launch("Home")` 显示桌面 → 挂载内置 SPIFFS。
-- `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`、`espressif/es8311 ~1.0.0`。
+- `main/idf_component.yml` —— 声明依赖：`idf >=5.4.0`、`lvgl/lvgl ~8.3.0`、`espressif/esp_lvgl_port ~1.4.0`、`espressif/esp_lcd_touch_ft5x06 ~1.0.7`（ES8311 音频 DAC 不用组件，见 `drivers/src/drv_es8311.c` 自实现的寄存器驱动）。
 - `dependencies.lock` —— 精确锁定版本，**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
 - `partitions.csv` —— 自定义分区表，已在用（见文件头）。**不要切换到内置分区方案**，否则必须同步修改 factory/ota 布局和文档。
 
@@ -197,6 +197,15 @@ LVGL 的 `indev_proc_release` 会**无条件**发送 `LV_EVENT_CLICKED`，只有
 - 滑块（`LV_PART_MAIN` 轨道 / `LV_PART_INDICATOR` 指示条 / `LV_PART_KNOB` 圆点）、输入框、卡片、浮层同理。
 - 改完界面跑 `python tools/check_ui_colors.py` 自检（扫描"创建标签但附近没有设色"的地方）。
 - 浅色主题下白卡片与浅灰页面靠描边区分，卡片 / 按钮 / 浮层都要 `border_width = 1` + `border_color = fw_theme_color_border()`。
+
+### 4.15 I2C 统一走新版 i2c_master 驱动
+
+Drivers 层不再使用旧版 `driver/i2c.h`（`i2c_driver_install()` 会打印迁移告警，而且旧驱动与新版 `i2c_master` 不能同时占用同一个端口）：
+
+- 总线在 `bsp_init()` 里由 `drv_i2c_bus_init()` 建一次（I2C0，GPIO1/2，100 kHz），句柄用 `drv_i2c_bus_handle()` 取。
+- 芯片驱动在自己的 `init()` 里 `drv_i2c_device_add(地址, 频率, &s_dev)` 挂设备，之后用 `drv_i2c_read_reg()` / `drv_i2c_write_reg()` 读写寄存器（内部是 `i2c_master_transmit_receive()` / `i2c_master_transmit()`）。
+- 触摸走 esp_lcd：`esp_lcd_new_panel_io_i2c()` 传入 `drv_i2c_bus_handle()` 时会由 `_Generic` 自动分派到 v2 实现，并且**必须显式给 `tp_io_config.scl_speed_hz`**（v2 不接受 0，v1 反而要求 0，别照抄旧例程）。
+- ES8311 音频 DAC 原先依赖已废弃的 `espressif/es8311`（只能用旧驱动、新版永不支持），现由 `drivers/src/drv_es8311.c` 自实现寄存器序列（源自该组件，Apache-2.0），只做 I2C 配置，I2S 数据通路仍在 `periph_audio`。时钟拓扑固定为 MCLK = 采样率 × 256，该比例下分频系数与采样率无关，所以只有一组系数。
 
 ---
 

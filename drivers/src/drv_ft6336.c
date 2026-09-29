@@ -18,11 +18,12 @@ esp_err_t drv_ft6336_init(void)
         return ESP_OK;
     }
 
-    // I2C panel IO (legacy v1 API，不需要也不允许设置 scl_speed_hz)
+    // I2C panel IO（新版 i2c_master：传总线句柄，并显式给 SCL 频率）
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    tp_io_config.scl_speed_hz = DRV_I2C_FREQ_HZ;
 
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)0, &tp_io_config, &tp_io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(drv_i2c_bus_handle(), &tp_io_config, &tp_io_handle));
 
     // 触摸配置 - 坐标与 LCD 匹配（已交换 XY + 镜像 X）
     const esp_lcd_touch_config_t tp_cfg = {

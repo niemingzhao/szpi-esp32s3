@@ -49,7 +49,7 @@
                                      ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                       ESP-IDF + FreeRTOS + Third-Party                    │
-│   driver/i2c  driver/spi  driver/i2s  driver/sdmmc  driver/ledc           │
+│   driver/i2c_master  driver/spi  driver/i2s  driver/sdmmc  driver/ledc    │
 │   esp_lcd  esp_lcd_touch  esp_timer  nvs_flash  vfs  esp_event             │
 │   esp_wifi  bt  esp_http_client  mqtt  lvgl  esp_lvgl_port              │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -181,9 +181,8 @@ idf_component_register(
 ```
 lvgl/lvgl                       # GUI 库
 espressif/esp_lvgl_port         # LVGL 适配层
-espressif/esp_lcd_touch_ft5x06 # FT6336 驱动
-espressif/esp_codec_dev         # 音频 codec 抽象
-espressif/es8311                # 音频 DAC
+espressif/esp_lcd_touch_ft5x06 # FT6336 驱动（I2C panel IO v2）
+espressif/esp_codec_dev         # 音频 codec 抽象（录音 / 多 codec 时使用）
 espressif/es7210                # 音频 ADC
 espressif/esp32-camera          # GC0308 摄像头
 chmorgan/esp-audio-player       # 音频播放
@@ -193,3 +192,5 @@ espressif/esp_websocket_client  # WebSocket
 ```
 
 各组件使用各自最新稳定版本。
+
+ST7789 / PCA9557 / FT6336 / QMI8658 / ES8311 的芯片级驱动在本仓库 `drivers/` 自实现，I2C 统一走新版 `driver/i2c_master`（经 `drv_i2c_*` 封装），不引入对应的第三方组件。

@@ -28,7 +28,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "===== SZPI-OS Boot =====");
     ESP_LOGI(TAG, "ESP-IDF version: %s", esp_get_idf_version());
-    ESP_LOGI(TAG, "SZPI-OS %s / %s", SZPI_OS_VERSION, SZPI_OS_LAYER);
+    ESP_LOGI(TAG, "SZPI-OS %s", SZPI_OS_VERSION);
 
     // 1. NVS 初始化
     esp_err_t ret = nvs_flash_init();

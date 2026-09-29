@@ -9,7 +9,7 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
 #include "driver/gpio.h"
@@ -20,6 +20,45 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// ============================================================================
+// I2C0 主机总线（新版 i2c_master 驱动）
+// ============================================================================
+
+#define DRV_I2C_SDA_GPIO   GPIO_NUM_1
+#define DRV_I2C_SCL_GPIO   GPIO_NUM_2
+#define DRV_I2C_FREQ_HZ    100000    /* 100 kHz */
+
+/**
+ * @brief 创建 I2C0 主机总线（由 bsp_init 调用，只建一次）
+ */
+esp_err_t drv_i2c_bus_init(void);
+
+/**
+ * @brief 总线句柄（触摸 panel_io 需要直接使用）
+ */
+i2c_master_bus_handle_t drv_i2c_bus_handle(void);
+
+/**
+ * @brief 在总线上挂一个从设备，得到设备句柄
+ *
+ * @param dev_addr      7 位从机地址
+ * @param scl_speed_hz  该设备的 SCL 频率
+ */
+esp_err_t drv_i2c_device_add(uint16_t dev_addr, uint32_t scl_speed_hz,
+                             i2c_master_dev_handle_t *out_dev);
+
+/**
+ * @brief 写寄存器：先发寄存器地址，再发数据
+ */
+esp_err_t drv_i2c_write_reg(i2c_master_dev_handle_t dev, uint8_t reg,
+                            const uint8_t *data, size_t len);
+
+/**
+ * @brief 读寄存器：发寄存器地址后重复起始读 len 字节
+ */
+esp_err_t drv_i2c_read_reg(i2c_master_dev_handle_t dev, uint8_t reg,
+                           uint8_t *data, size_t len);
 
 // ============================================================================
 // BSP - Board Initialization

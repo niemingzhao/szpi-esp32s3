@@ -6,7 +6,6 @@
 
 #include "drv_common.h"
 #include "esp_log.h"
-#include "driver/i2c.h"
 
 static const char *TAG = "drv.pca9557";
 
@@ -19,16 +18,16 @@ static const char *TAG = "drv.pca9557";
 #define PCA9557_CONFIG_PORT    0x03
 
 static bool s_initialized = false;
+static i2c_master_dev_handle_t s_dev = NULL;
 
 static esp_err_t pca9557_read_reg(uint8_t reg, uint8_t *data)
 {
-    return i2c_master_write_read_device(0, PCA9557_ADDR, &reg, 1, data, 1, 1000 / portTICK_PERIOD_MS);
+    return drv_i2c_read_reg(s_dev, reg, data, 1);
 }
 
 static esp_err_t pca9557_write_reg(uint8_t reg, uint8_t data)
 {
-    uint8_t buf[2] = { reg, data };
-    return i2c_master_write_to_device(0, PCA9557_ADDR, buf, sizeof(buf), 1000 / portTICK_PERIOD_MS);
+    return drv_i2c_write_reg(s_dev, reg, &data, 1);
 }
 
 esp_err_t drv_pca9557_init(void)
@@ -36,6 +35,8 @@ esp_err_t drv_pca9557_init(void)
     if (s_initialized) {
         return ESP_OK;
     }
+
+    ESP_ERROR_CHECK(drv_i2c_device_add(PCA9557_ADDR, DRV_I2C_FREQ_HZ, &s_dev));
 
     // BIT0/BIT1/BIT2 设为输出，其他保持输入
     ESP_ERROR_CHECK(pca9557_write_reg(PCA9557_CONFIG_PORT, 0xF8));

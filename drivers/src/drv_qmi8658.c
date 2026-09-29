@@ -43,22 +43,28 @@ static const char *TAG = "drv.qmi8658";
 #define QMI8658_GRAVITY          9.80665f
 
 static bool s_initialized = false;
+static i2c_master_dev_handle_t s_dev = NULL;
 
 static esp_err_t qmi8658_write_reg(uint8_t reg, uint8_t data)
 {
-    uint8_t buf[2] = { reg, data };
-    return i2c_master_write_to_device(0, QMI8658_ADDR, buf, sizeof(buf), 1000 / portTICK_PERIOD_MS);
+    return drv_i2c_write_reg(s_dev, reg, &data, 1);
 }
 
 static esp_err_t qmi8658_read_buf(uint8_t reg, uint8_t *data, size_t len)
 {
-    return i2c_master_write_read_device(0, QMI8658_ADDR, &reg, 1, data, len, 1000 / portTICK_PERIOD_MS);
+    return drv_i2c_read_reg(s_dev, reg, data, len);
 }
 
 esp_err_t drv_qmi8658_init(void)
 {
     if (s_initialized) {
         return ESP_OK;
+    }
+
+    esp_err_t derr = drv_i2c_device_add(QMI8658_ADDR, DRV_I2C_FREQ_HZ, &s_dev);
+    if (derr != ESP_OK) {
+        ESP_LOGW(TAG, "QMI8658 add device failed");
+        return derr;
     }
 
     uint8_t whoami = 0;

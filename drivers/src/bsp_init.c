@@ -12,25 +12,6 @@
 static const char *TAG = "bsp.init";
 
 // ============================================================================
-// I2C 总线初始化 (内部使用)
-// ============================================================================
-
-static esp_err_t bsp_i2c_init(void)
-{
-    i2c_config_t i2c_conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = GPIO_NUM_1,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_io_num = GPIO_NUM_2,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000,  // 100 kHz
-    };
-
-    ESP_ERROR_CHECK(i2c_param_config(0, &i2c_conf));
-    return i2c_driver_install(0, i2c_conf.mode, 0, 0, 0);
-}
-
-// ============================================================================
 // BSP 初始化入口
 // ============================================================================
 
@@ -44,9 +25,8 @@ esp_err_t bsp_init(esp_lcd_panel_handle_t *out_lcd_panel,
 
     ESP_LOGI(TAG, "=== BSP Init Start ===");
 
-    // 1. I2C 总线 (最早，所有 I2C 设备都依赖它)
-    ESP_ERROR_CHECK(bsp_i2c_init());
-    ESP_LOGI(TAG, "I2C0 initialized (GPIO1=SDA, GPIO2=SCL, 100 kHz)");
+    // 1. I2C 总线 (最早，所有 I2C 设备都依赖它；日志由 drv_i2c 打印)
+    ESP_ERROR_CHECK(drv_i2c_bus_init());
 
     // 2. LEDC (背光 PWM，在 SPI LCD 之前初始化)
     ESP_ERROR_CHECK(drv_ledc_init());

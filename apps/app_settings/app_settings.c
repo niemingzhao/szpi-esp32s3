@@ -527,12 +527,12 @@ static void build_about(lv_obj_t *page)
 
     char buf[320];
     snprintf(buf, sizeof(buf),
-             "SZPI-OS %s / %s\n"
+             "SZPI-OS %s\n"
              "ESP-IDF %s\n"
              "芯片 ESP32-S3，%d 核\n"
              "内部 RAM 剩余 %u KB\n"
              "PSRAM 剩余 %u KB",
-             SZPI_OS_VERSION, SZPI_OS_LAYER, esp_get_idf_version(), ci.cores,
+             SZPI_OS_VERSION, esp_get_idf_version(), ci.cores,
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
