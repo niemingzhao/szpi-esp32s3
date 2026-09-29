@@ -45,6 +45,11 @@ esp_err_t fw_statusbar_set_music_playing(bool on);
  */
 esp_err_t fw_statusbar_set_bluetooth(bool on);
 
+/**
+ * @brief 设置亮度图标（背光 0 时灰、<50% 次级色、>=50% 主色）
+ */
+esp_err_t fw_statusbar_set_brightness(uint8_t percent);
+
 #ifdef __cplusplus
 }
 #endif

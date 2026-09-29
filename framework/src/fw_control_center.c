@@ -5,7 +5,7 @@
  *
  * 由状态栏的“控制中心”按钮打开，占满状态栏以下的显示区；内容用纵向 flex 排布，
  * 超出高度时可滚动。右上角 × 关闭。
- * 蓝牙 / 手电筒 / 锁屏磁贴待对应服务（BLE、GPIO、锁屏）落地后再补。
+ * Wi-Fi 与蓝牙磁贴整行可点（蓝牙控制广播开关）；手电筒 / 锁屏磁贴待对应硬件与功能落地后再补。
  */
 
 #include "fw_control_center.h"
@@ -18,6 +18,10 @@ static const char *TAG = "fw.ctrl_center";
 
 static lv_obj_t *s_scrim = NULL;
 static lv_obj_t *s_wifi_label = NULL;
+static lv_obj_t *s_bt_label = NULL;
+static lv_obj_t *s_torch_label = NULL;
+static bool s_torch_on = false;
+static uint8_t s_torch_saved = 80;
 static lv_obj_t *s_bright = NULL;
 static lv_obj_t *s_vol = NULL;
 static bool s_visible = false;
@@ -32,6 +36,90 @@ static void update_wifi(void)
 
     lv_label_set_text(s_wifi_label, connected ? (LV_SYMBOL_WIFI "  已连接")
                                               : (LV_SYMBOL_WIFI "  未连接"));
+}
+
+/* 蓝牙磁贴状态文字：未启动 / 未广播 / 广播中（可配对）/ 已连接 */
+static void update_bt(void)
+{
+    if (s_bt_label == NULL) return;
+
+    const char *text;
+    switch (svc_bt_get_state()) {
+    case SVC_BT_STATE_CONNECTED:
+        text = LV_SYMBOL_BLUETOOTH "  已连接";
+        break;
+    case SVC_BT_STATE_ADVERTISING:
+        text = LV_SYMBOL_BLUETOOTH "  广播中";
+        break;
+    case SVC_BT_STATE_READY:
+        text = LV_SYMBOL_BLUETOOTH "  未广播";
+        break;
+    default:
+        text = LV_SYMBOL_BLUETOOTH "  未启动";
+        break;
+    }
+    lv_label_set_text(s_bt_label, text);
+}
+
+/* 蓝牙磁贴：开关广播（协议栈在 Services 初始化早期启动，这里只切换可被发现） */
+static void bt_cb(lv_event_t *e)
+{
+    (void)e;
+
+    switch (svc_bt_get_state()) {
+    case SVC_BT_STATE_ADVERTISING:
+        svc_bt_adv_stop();
+        break;
+    case SVC_BT_STATE_READY:
+        svc_bt_adv_start();
+        break;
+    default:                        /* OFF / CONNECTED：不改广播 */
+        break;
+    }
+    update_bt();
+}
+
+static void evt_bt(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+    lvgl_port_lock(0);
+    update_bt();
+    lvgl_port_unlock();
+}
+
+/* ------------------------------- 手电筒 ------------------------------- */
+
+/* 本板没有可控 LED（01-hardware-spec.md 里唯一的"灯"是 LCD 背光），
+ * 所以"手电筒"做成屏幕手电筒：背光拉到 100%，关闭时恢复原来的亮度。 */
+static void update_torch(void)
+{
+    if (s_torch_label == NULL) return;
+    lv_label_set_text(s_torch_label, s_torch_on ? (LV_SYMBOL_TINT "  手电筒  开")
+                                                : (LV_SYMBOL_TINT "  手电筒  关"));
+}
+
+static void torch_cb(lv_event_t *e)
+{
+    (void)e;
+
+    if (s_torch_on) {
+        svc_power_set_brightness(s_torch_saved > 0 ? s_torch_saved : 80);
+        s_torch_on = false;
+    } else {
+        s_torch_saved = svc_power_get_brightness();
+        svc_power_set_brightness(100);
+        s_torch_on = true;
+    }
+    update_torch();
+}
+
+/* 锁定：立刻锁屏（先把控制中心收起来） */
+static void lock_cb(lv_event_t *e)
+{
+    (void)e;
+    fw_control_center_hide();
+    fw_lockscreen_lock();
 }
 
 static void forget_confirmed(fw_dialog_btn_t btn, void *user)
@@ -245,9 +333,57 @@ static void panel_build(lv_coord_t w, lv_coord_t h)
     lv_obj_set_style_text_color(s_wifi_label, fw_theme_color_text_primary(), 0);
     lv_obj_center(s_wifi_label);
 
+    /* 蓝牙：整行可点，开关广播 */
+    lv_obj_t *bt = lv_btn_create(body);
+    lv_obj_set_width(bt, lv_pct(100));
+    lv_obj_set_height(bt, 46);
+    lv_obj_set_style_bg_color(bt, fw_theme_color_bg_card(), 0);
+    lv_obj_set_style_radius(bt, 8, 0);
+    lv_obj_set_style_shadow_width(bt, 0, 0);
+    lv_obj_set_style_border_width(bt, 1, 0);
+    lv_obj_set_style_border_color(bt, fw_theme_color_border(), 0);
+    lv_obj_add_event_cb(bt, bt_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    s_bt_label = lv_label_create(bt);
+    lv_obj_set_style_text_font(s_bt_label, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(s_bt_label, fw_theme_color_text_primary(), 0);
+    lv_obj_center(s_bt_label);
+    update_bt();
+
     /* 亮度 / 音量 */
     make_slider_row(body, "亮度", (int32_t)svc_power_get_brightness(), bright_cb, &s_bright);
     make_slider_row(body, "音量", (int32_t)svc_audio_get_volume(), vol_cb, &s_vol);
+
+    /* 手电筒：屏幕手电筒（本板无独立 LED，用背光代替） */
+    lv_obj_t *torch = lv_btn_create(body);
+    lv_obj_set_width(torch, lv_pct(100));
+    lv_obj_set_height(torch, 46);
+    lv_obj_set_style_bg_color(torch, fw_theme_color_bg_card(), 0);
+    lv_obj_set_style_radius(torch, 8, 0);
+    lv_obj_set_style_shadow_width(torch, 0, 0);
+    lv_obj_set_style_border_width(torch, 1, 0);
+    lv_obj_set_style_border_color(torch, fw_theme_color_border(), 0);
+    lv_obj_add_event_cb(torch, torch_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    s_torch_label = lv_label_create(torch);
+    lv_obj_set_style_text_font(s_torch_label, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(s_torch_label, fw_theme_color_text_primary(), 0);
+    lv_obj_center(s_torch_label);
+    update_torch();
+
+    /* 锁定：整行可点，锁屏界面由 fw_lockscreen 提供 */
+    lv_obj_t *lock = lv_btn_create(body);
+    lv_obj_set_width(lock, lv_pct(100));
+    lv_obj_set_height(lock, 46);
+    lv_obj_set_style_bg_color(lock, fw_theme_color_bg_card(), 0);
+    lv_obj_set_style_radius(lock, 8, 0);
+    lv_obj_set_style_shadow_width(lock, 0, 0);
+    lv_obj_set_style_border_width(lock, 1, 0);
+    lv_obj_set_style_border_color(lock, fw_theme_color_border(), 0);
+    lv_obj_add_event_cb(lock, lock_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_t *ll = lv_label_create(lock);
+    lv_label_set_text(ll, "锁定");
+    lv_obj_set_style_text_font(ll, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(ll, fw_theme_color_text_primary(), 0);
+    lv_obj_center(ll);
 
     /* 试听：验证音频通路（ES8311 + I2S + 功放） */
     lv_obj_t *audition = lv_btn_create(body);
@@ -276,6 +412,7 @@ esp_err_t fw_control_center_init(void)
 
     svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, evt_wifi, NULL);
     svc_event_bus_subscribe(SVC_EVENT_WIFI_DISCONNECTED, evt_wifi, NULL);
+    svc_event_bus_subscribe(SVC_EVENT_BT_STATE_CHANGED, evt_bt, NULL);
     svc_event_bus_subscribe(SVC_EVENT_BRIGHTNESS_CHANGED, evt_brightness, NULL);
 
     ESP_LOGI(TAG, "initialized");
@@ -291,6 +428,8 @@ esp_err_t fw_control_center_rebuild(void)
         lv_obj_del(s_scrim);
         s_scrim = NULL;
         s_wifi_label = NULL;
+        s_bt_label = NULL;
+        s_torch_label = NULL;
         s_bright = NULL;
         s_vol = NULL;
     }
@@ -310,6 +449,7 @@ esp_err_t fw_control_center_show(void)
 
     lvgl_port_lock(0);
     update_wifi();
+    update_bt();
     lv_obj_clear_flag(s_scrim, LV_OBJ_FLAG_HIDDEN);
     s_visible = true;
     lvgl_port_unlock();

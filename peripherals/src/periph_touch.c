@@ -14,6 +14,7 @@
 #include "drv_common.h"
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "esp_lvgl_port.h"
 #include "esp_lcd_touch.h"
 #include "freertos/FreeRTOS.h"

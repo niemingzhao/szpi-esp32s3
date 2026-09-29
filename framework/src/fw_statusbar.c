@@ -23,6 +23,10 @@ static lv_obj_t *s_noti_icon = NULL;
 static lv_timer_t *s_timer = NULL;
 static bool s_wifi_on = false;
 static bool s_music_on = false;
+static bool s_bt_on = false;
+static lv_obj_t *s_bt = NULL;
+static uint8_t s_bright_pct = 0;
+static lv_obj_t *s_bright = NULL;
 
 static void refresh_time(void)
 {
@@ -145,7 +149,34 @@ esp_err_t fw_statusbar_set_music_playing(bool on)
 
 esp_err_t fw_statusbar_set_bluetooth(bool on)
 {
-    (void)on;   /* BLE 服务尚未接入，暂不显示蓝牙图标 */
+    lvgl_port_lock(0);
+    s_bt_on = on;
+    if (s_bt != NULL) {
+        lv_obj_set_style_text_color(s_bt,
+                                    on ? fw_theme_color_text_primary()
+                                       : fw_theme_color_text_disabled(),
+                                    0);
+    }
+    lvgl_port_unlock();
+    return ESP_OK;
+}
+
+esp_err_t fw_statusbar_set_brightness(uint8_t percent)
+{
+    lvgl_port_lock(0);
+    s_bright_pct = percent;
+    if (s_bright != NULL) {
+        lv_color_t c;
+        if (percent == 0) {
+            c = fw_theme_color_text_disabled();      /* 背光关闭 */
+        } else if (percent < 50) {
+            c = fw_theme_color_text_secondary();
+        } else {
+            c = fw_theme_color_text_primary();
+        }
+        lv_obj_set_style_text_color(s_bright, c, 0);
+    }
+    lvgl_port_unlock();
     return ESP_OK;
 }
 
@@ -170,6 +201,22 @@ static void evt_audio(const svc_event_t *evt, void *user)
 {
     (void)user;
     fw_statusbar_set_music_playing(evt->id == SVC_EVENT_AUDIO_PLAYBACK_STARTED);
+}
+
+/* 蓝牙图标跟随 BLE 状态（协议栈在 Services 初始化早期启动，非 OFF 即点亮） */
+static void evt_bt(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+    fw_statusbar_set_bluetooth(svc_bt_get_state() != SVC_BT_STATE_OFF);
+}
+
+/* 亮度图标跟随背光（Settings / 控制中心改动都会走到这里） */
+static void evt_brightness(const svc_event_t *evt, void *user)
+{
+    (void)user;
+    if (evt->data == NULL || evt->data_len < sizeof(uint8_t)) return;
+    fw_statusbar_set_brightness(*(const uint8_t *)evt->data);
 }
 
 /* 有通知时把铃铛点亮（常驻入口，不隐藏） */
@@ -218,16 +265,22 @@ static void statusbar_build(void)
 
     /* 右：状态图标 + 通知中心 / 控制中心 */
     make_bar_btn(s_bar, LV_SYMBOL_SETTINGS, nav_ctrl_cb, LV_ALIGN_RIGHT_MID, -8, 32);
-    lv_obj_t *noti_btn = make_bar_btn(s_bar, LV_SYMBOL_BELL, nav_noti_cb, LV_ALIGN_RIGHT_MID, -48, 32);
+    lv_obj_t *noti_btn = make_bar_btn(s_bar, LV_SYMBOL_BELL, nav_noti_cb, LV_ALIGN_RIGHT_MID, -44, 32);
     s_noti_icon = lv_obj_get_child(noti_btn, 0);
 
-    s_wifi = make_bar_icon(s_bar, LV_SYMBOL_WIFI, LV_ALIGN_RIGHT_MID, -88);
-    s_music = make_bar_icon(s_bar, LV_SYMBOL_AUDIO, LV_ALIGN_RIGHT_MID, -108);
+    /* 状态图标（从右往左依次靠近；间距 18 px，最左侧的亮度图标要给中间时钟留位） */
+    s_wifi = make_bar_icon(s_bar, LV_SYMBOL_WIFI, LV_ALIGN_RIGHT_MID, -76);
+    s_music = make_bar_icon(s_bar, LV_SYMBOL_AUDIO, LV_ALIGN_RIGHT_MID, -94);
     lv_obj_set_style_text_color(s_music, fw_theme_color_accent(), 0);
+    s_bt = make_bar_icon(s_bar, LV_SYMBOL_BLUETOOTH, LV_ALIGN_RIGHT_MID, -112);
+    s_bright = make_bar_icon(s_bar, LV_SYMBOL_TINT, LV_ALIGN_RIGHT_MID, -132);
 
-    /* 重建时把当前状态重新套上 */
+    /* 重建时把当前状态重新套上（BLE 在 Services 早期就启动了，这里同步一次真实状态） */
+    s_bt_on = (svc_bt_get_state() != SVC_BT_STATE_OFF);
     fw_statusbar_set_wifi(0, s_wifi_on);
     fw_statusbar_set_music_playing(s_music_on);
+    fw_statusbar_set_bluetooth(s_bt_on);
+    fw_statusbar_set_brightness(s_bright_pct);
     evt_noti(NULL, NULL);
     refresh_time();
 }
@@ -246,6 +299,8 @@ esp_err_t fw_statusbar_init(void)
     svc_event_bus_subscribe(SVC_EVENT_WIFI_DISCONNECTED, evt_wifi, NULL);
     svc_event_bus_subscribe(SVC_EVENT_AUDIO_PLAYBACK_STARTED, evt_audio, NULL);
     svc_event_bus_subscribe(SVC_EVENT_AUDIO_PLAYBACK_FINISHED, evt_audio, NULL);
+    svc_event_bus_subscribe(SVC_EVENT_BT_STATE_CHANGED, evt_bt, NULL);
+    svc_event_bus_subscribe(SVC_EVENT_BRIGHTNESS_CHANGED, evt_brightness, NULL);
     svc_event_bus_subscribe(SVC_EVENT_NOTIFICATION_POSTED, evt_noti, NULL);
     svc_event_bus_subscribe(SVC_EVENT_NOTIFICATION_DISMISSED, evt_noti, NULL);
 
@@ -264,6 +319,8 @@ esp_err_t fw_statusbar_rebuild(void)
         s_time = NULL;
         s_wifi = NULL;
         s_music = NULL;
+        s_bt = NULL;
+        s_bright = NULL;
         s_noti_icon = NULL;
     }
 

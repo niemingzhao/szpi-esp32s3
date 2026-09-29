@@ -6,7 +6,7 @@
  * 启动序列：
  *   NVS → bsp_init()（Drivers）→ peripherals_init_all()（含 LVGL display/touch）
  *   → services_init() → fw_init() → app_register_all() → fw_boot_animation()
- *   → fw_app_mgr_launch("Home") → 挂载内置 Flash（首次自动格式化）
+ *   → fw_app_mgr_launch("Home") → 挂载内置 Flash（首次自动格式化）→ 打开看门狗
  */
 
 #include <stdio.h>
@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "drv_common.h"
 #include "periph_common.h"
@@ -58,8 +59,20 @@ void app_main(void)
     ESP_LOGI(TAG, "Home launched");
 
     // 7. 挂载内置 Flash 文件系统（首次自动格式化；放在首屏之后避免阻塞）
+    //    这里也是内部内存最紧的时刻（Wi-Fi 刚连上、BLE 在广播），打一条余量便于排查。
+    //    容量一律用 MALLOC_CAP_DMA：它正好是"内部 DMA 可用区"，也是 BLE/音频/帧缓冲/FreeRTOS
+    //    对象真正会耗的那块；MALLOC_CAP_INTERNAL 会把 IRAM 也算进来，largest 会大得没有意义。
+    ESP_LOGI(TAG, "heap before internal mount: dma-internal free=%u largest=%u, psram free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     if (periph_storage_mount(PERIPH_STORAGE_INTERNAL_FLASH) != ESP_OK) {
         ESP_LOGW(TAG, "internal storage mount failed");
+    }
+
+    // 8. 启动完成，打开看门狗的超时自动重启（SYS-004）
+    if (svc_watchdog_arm() != ESP_OK) {
+        ESP_LOGW(TAG, "watchdog arm failed");
     }
 
     ESP_LOGI(TAG, "===== Ready =====");

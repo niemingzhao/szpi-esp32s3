@@ -58,7 +58,7 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 - 右侧通知 / 控制中心按钮打开对应浮层（两者互斥，再点一次关闭）
 - 状态栏高度由 `FW_STATUSBAR_H` 定义；App 内容区与浮层都以此为顶部偏移
 - 状态栏按钮用 `lv_obj_set_ext_click_area()` 向四周扩大触摸区域（视觉尺寸不变），弥补面板触摸与显示位置的微小偏差
-- 蓝牙图标待 BLE 服务落地后显示
+- 蓝牙图标跟随 BLE 状态：`svc_bt_get_state() != SVC_BT_STATE_OFF` 时点亮（广播中 / 已连接都算开启）
 
 ## 3. fw_control_center（控制中心）
 
@@ -95,7 +95,9 @@ bool fw_control_center_is_visible(void);
 - Wi-Fi 磁贴：已连接时点击 = 断开（`svc_net_wifi_stop()`）；未连接时点击 = 用已保存凭据免密重连（`svc_net_wifi_auto_connect()`，没保存过则只打开 Wi-Fi 开关）
 - “试听” 按钮调用 `svc_audio_play_tone_async(1000, 300)`，用于确认音频通路
 - 长按 Wi-Fi 磁贴弹出"忘记已保存的网络？"确认框，确认后 `svc_net_wifi_forget()` 忘记网络并关闭 Wi-Fi（与 Settings 里的"忘记网络"措辞一致）
-- 蓝牙磁贴待 BLE 服务落地；手电筒 / 锁屏磁贴待对应服务
+- 蓝牙磁贴显示 BLE 状态（未启动 / 未广播 / 广播中 / 已连接），点击在"广播中"与"未广播"之间切换（已连接时点击不改广播）
+- 手电筒磁贴用屏幕背光实现（本板没有可控 LED）：打开时背光拉满，关闭时恢复原亮度
+- 锁屏磁贴拉下全屏锁屏浮层（见 4.19 节 / `AGENTS.md`），上滑或长按解锁
 
 ## 4. fw_notification（通知中心）
 
@@ -305,7 +307,7 @@ lvgl_port_init(&lvgl_cfg);
 const lvgl_port_display_cfg_t disp_cfg = {
     .io_handle = io_handle,        // 来自 drv_st7789_get_io_handle()
     .panel_handle = panel_handle,  // 来自 drv_st7789_get_panel_handle()
-    .buffer_size = 320 * 20,       // 20 行高
+    .buffer_size = 320 * 10,       // 10 行高
     .double_buffer = false,
     .hres = 320,
     .vres = 240,
@@ -316,11 +318,15 @@ const lvgl_port_display_cfg_t disp_cfg = {
         .mirror_y = false,
     },
     .flags = {
-        .buff_dma = false,
-        .buff_spiram = true,        // 帧缓冲强制 PSRAM
+        .buff_dma = true,
+        .buff_spiram = false,       // 帧缓冲放内置 DMA 内存（见 AGENTS.md 4.2）
     }
 };
 lv_disp_t *disp = lvgl_port_add_disp(&disp_cfg);
+
+/* 换成带错误处理的 flush 回调：esp_lvgl_port 自带的实现忽略 draw_bitmap 的返回值，
+ * 刷屏失败时不会调 lv_disp_flush_ready()，单缓冲下 LVGL 会死等（界面永久卡死） */
+disp->driver->flush_cb = periph_lcd_flush_cb;
 ```
 
 ```c

@@ -18,6 +18,7 @@ static void theme_rebuild_async(void *user)
     fw_statusbar_rebuild();
     fw_notification_rebuild();
     fw_control_center_rebuild();
+    fw_lockscreen_rebuild();
     fw_app_mgr_rebuild_all();
 
     ESP_LOGI(TAG, "UI rebuilt for theme change");
@@ -54,6 +55,7 @@ esp_err_t fw_init(void)
     ESP_ERROR_CHECK(fw_statusbar_init());
     ESP_ERROR_CHECK(fw_notification_init());
     ESP_ERROR_CHECK(fw_control_center_init());
+    ESP_ERROR_CHECK(fw_lockscreen_init());
     ESP_ERROR_CHECK(fw_input_init());
 
     svc_event_bus_subscribe(SVC_EVENT_THEME_CHANGED, evt_theme, NULL);

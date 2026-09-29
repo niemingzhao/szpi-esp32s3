@@ -52,6 +52,13 @@ esp_err_t periph_storage_unmount(periph_storage_type_t type);
 bool periph_storage_is_mounted(periph_storage_type_t type);
 
 /**
+ * @brief TF 卡是否仍可访问（热插拔检测：卡被拔出后会返回 false）
+ *
+ * 未挂载或卡已拔出都返回 false；调用它不会改变挂载状态。
+ */
+bool periph_storage_tf_card_present(void);
+
+/**
  * @brief 查询存储信息
  */
 esp_err_t periph_storage_get_info(periph_storage_type_t type, periph_storage_info_t *out);

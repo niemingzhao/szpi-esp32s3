@@ -118,6 +118,14 @@ bool periph_storage_is_mounted(periph_storage_type_t type)
     return s_flash_mounted;
 }
 
+bool periph_storage_tf_card_present(void)
+{
+    if (!s_tf_mounted || s_tf_card == NULL) return false;
+
+    /* 卡被拔出后总线访问会失败 */
+    return (sdmmc_get_status(s_tf_card) == ESP_OK);
+}
+
 esp_err_t periph_storage_get_info(periph_storage_type_t type, periph_storage_info_t *out)
 {
     if (out == NULL) return ESP_ERR_INVALID_ARG;

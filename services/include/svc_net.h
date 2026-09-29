@@ -69,6 +69,11 @@ esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len);
 esp_err_t svc_net_smartconfig_start(void);
 esp_err_t svc_net_smartconfig_stop(void);
 
+/** AP/Web 配网：开热点 + HTTP 配置页（浏览器访问 http://192.168.4.1/），连上目标 AP 后自动关闭 */
+esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password);
+esp_err_t svc_net_prov_stop(void);
+bool svc_net_prov_is_active(void);
+
 /** 状态查询 */
 esp_err_t svc_net_get_status(svc_net_status_t *status);
 
@@ -76,19 +81,7 @@ esp_err_t svc_net_get_status(svc_net_status_t *status);
 esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 
-/** MQTT */
-esp_err_t svc_mqtt_connect(const char *uri, const char *username, const char *password);
-esp_err_t svc_mqtt_publish(const char *topic, const char *payload, int qos);
-esp_err_t svc_mqtt_subscribe(const char *topic, int qos, void (*cb)(const char *topic, const char *payload));
-esp_err_t svc_mqtt_disconnect(void);
-
-/** WebSocket */
-esp_err_t svc_ws_connect(const char *uri, void (*cb)(const char *data, size_t len));
-esp_err_t svc_ws_send(const char *data, size_t len);
-esp_err_t svc_ws_disconnect(void);
-
-/** OTA */
-esp_err_t svc_ota_check_and_update(const char *url);
+/** MQTT / WebSocket / OTA 已拆成独立服务：见 svc_mqtt.h、svc_ws.h、svc_ota.h */
 
 #ifdef __cplusplus
 }

@@ -7,12 +7,21 @@ Services 层提供跨多个 Peripherals 的业务服务，处理协议、状态�
 | 服务 | 头文件 | 主要职责 |
 |------|--------|----------|
 | Event Bus | `svc_event_bus.h` | 系统事件分发 |
+| Settings | `svc_settings.h` | 配置持久化（NVS，含 blob） |
+| Storage | `svc_storage.h` | 文件系统抽象、TF 热插拔 |
 | Time | `svc_time.h` | SNTP 同步、时区 |
 | Audio | `svc_audio.h` | 音乐 / 录音 / 提示音 |
-| Network | `svc_net.h` | Wi-Fi 状态机、HTTP / MQTT / WebSocket |
-| Storage | `svc_storage.h` | 文件系统抽象 |
+| Network | `svc_net.h` | Wi-Fi 状态机、HTTP 客户端、配网 |
+| Bluetooth | `svc_bt.h` | BLE 广播、GATT 从机、扫描 |
+| MQTT | `svc_mqtt.h` | MQTT 客户端 |
+| WebSocket | `svc_ws.h` | WebSocket 客户端 |
+| OTA | `svc_ota.h` | HTTPS 升级 |
 | Notification | `svc_notification.h` | 通知队列、UI 路由 |
-| Power | `svc_power.h` | 电源管理 |
+| Power | `svc_power.h` | 电源管理、背光、唤醒 |
+| IMU | `svc_imu.h` | 运动 / 姿态事件 |
+| Watchdog | `svc_watchdog.h` | Task Watchdog |
+| System Info | `svc_sysinfo.h` | 系统信息查询 |
+| Shell | `svc_shell.h` | 串口命令行 |
 
 ## 2. svc_event_bus（事件总线）
 
@@ -244,12 +253,11 @@ esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 ### 5.1 职责
 
 - Wi-Fi 状态机（连接、断开、重连）
-- 蓝牙（BLE 主机 / 外设）
 - HTTP 客户端
-- MQTT 客户端
-- WebSocket 客户端
+- SmartConfig / AP-Web 配网
 - SNTP 时间同步（注册到 svc_time）
-- OTA 升级
+- 蓝牙 BLE 由独立服务 `svc_bt` 提供（广播 / GATT 从机 / 扫描）
+- MQTT 客户端由 `svc_mqtt`、WebSocket 客户端由 `svc_ws`、OTA 升级由 `svc_ota` 提供
 
 ### 5.2 接口
 
@@ -462,17 +470,29 @@ esp_err_t svc_power_request_shutdown(void);
 
 ```c
 esp_err_t services_init(void) {
-    ESP_ERROR_CHECK(svc_event_bus_init());        // 1. 事件总线（所有服务都依赖）
-    ESP_ERROR_CHECK(svc_settings_init());         // 2. 配置（NVS）
-    ESP_ERROR_CHECK(svc_storage_init());          // 3. 存储
-    ESP_ERROR_CHECK(svc_time_init());             // 4. 时间
-    ESP_ERROR_CHECK(svc_audio_init());            // 5. 音频
-    ESP_ERROR_CHECK(svc_net_init());              // 6. 网络
-    ESP_ERROR_CHECK(svc_power_init());            // 7. 电源
-    ESP_ERROR_CHECK(svc_notification_init());     // 8. 通知（依赖事件总线）
+    ESP_ERROR_CHECK(svc_watchdog_init());         // 1. 看门狗（先配成"只告警"）
+    ESP_ERROR_CHECK(svc_event_bus_init());        // 2. 事件总线（所有服务都依赖）
+    ESP_ERROR_CHECK(svc_settings_init());         // 3. 配置（NVS）
+    ESP_ERROR_CHECK(svc_storage_init());          // 4. 存储
+    ESP_ERROR_CHECK(svc_bt_init());               // 5. 蓝牙（必须在 Wi-Fi 之前，见 AGENTS 4.6）
+    ESP_ERROR_CHECK(svc_time_init());             // 6. 时间
+    ESP_ERROR_CHECK(svc_audio_init());            // 7. 音频
+    ESP_ERROR_CHECK(svc_net_init());              // 8. 网络
+    ESP_ERROR_CHECK(svc_power_init());            // 9. 电源
+    ESP_ERROR_CHECK(svc_imu_init());              // 10. IMU
+    ESP_ERROR_CHECK(svc_notification_init());     // 11. 通知（依赖事件总线）
+    ESP_ERROR_CHECK(svc_sysinfo_init());          // 12. 系统信息（含崩溃记录）
+    svc_shell_start();                            // 13. 串口命令行（失败不影响运行）
     return ESP_OK;
 }
 ```
+
+`svc_bt_init()` 必须紧跟 Storage 之后、Wi-Fi 之前：控制器要一块 30 KB 连续内部内存，主机的
+工作队列与任务栈又只能用内部 RAM，晚于 Wi-Fi / LVGL / 音频就会随机初始化失败（细节见
+`AGENTS.md` 4.6）。它失败只打警告，不阻塞启动。
+
+`svc_watchdog_arm()` 不在 `services_init()` 里：要等启动全部完成（含首次 SPIFFS 格式化）后才
+打开"超时自动重启"，由 `main.c` 在挂载内置 Flash 之后调用。
 
 ## 10. 任务模型
 

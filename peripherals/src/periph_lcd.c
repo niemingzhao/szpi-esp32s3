@@ -23,11 +23,42 @@ static const char *TAG = "periph.lcd";
 
 #define PERIPH_LCD_DEFAULT_BRIGHTNESS 80
 
-#define LVGL_BUFFER_LINES 20
+#define LVGL_BUFFER_LINES 10
 
 static bool s_initialized = false;
 static uint8_t s_brightness = PERIPH_LCD_DEFAULT_BRIGHTNESS;
 static lv_disp_t *s_disp = NULL;
+
+/* 自己的 flush 回调：包一层错误处理。
+ *
+ * esp_lvgl_port 自带的实现直接调 esp_lcd_panel_draw_bitmap() 且**忽略返回值**；底层一旦失败
+ * （典型场景：帧缓冲在 PSRAM 时，ESP32-S3 的 SPI 驱动认定 PSRAM 不可 DMA，会为每一笔
+ * 传输临时申请一块内部 DMA 回弹缓冲，Wi-Fi / BLE 起来后这笔分配可能失败），
+ * lv_disp_flush_ready() 就永远不会被调用。而单缓冲下 LVGL 会在 lv_refr.c 里
+ * `while(draw_buf->flushing)` 死等这块缓冲 —— 表现为 LVGL 任务占满 CPU、界面永久卡住、
+ * 事件总线任务被饿死触发看门狗。
+ *
+ * 这里失败时补一次 lv_disp_flush_ready()：最多丢一帧，绝不死锁，并把错误码打出来。
+ * 成功路径不变：传输完成的回调仍由 panel IO 的 on_color_trans_done 触发。 */
+static void periph_lcd_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
+{
+    esp_lcd_panel_handle_t panel = NULL;
+    esp_err_t err = drv_st7789_get_panel_handle(&panel);
+
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_map);
+    }
+
+    if (err != ESP_OK) {
+        static uint32_t s_flush_err = 0;
+        if (s_flush_err++ == 0) {
+            ESP_LOGE(TAG, "flush failed: %s (area %d,%d-%d,%d), flush_ready forced",
+                     esp_err_to_name(err), (int)area->x1, (int)area->y1,
+                     (int)area->x2, (int)area->y2);
+        }
+        lv_disp_flush_ready(drv);
+    }
+}
 
 esp_err_t periph_lcd_init(void)
 {
@@ -39,7 +70,13 @@ esp_err_t periph_lcd_init(void)
     ESP_RETURN_ON_ERROR(drv_st7789_get_panel_handle(&panel), TAG, "LCD panel not initialized");
     ESP_RETURN_ON_ERROR(drv_st7789_get_io_handle(&io), TAG, "LCD io not initialized");
 
-    /* 2. LVGL port + display（帧缓冲放 PSRAM） */
+    /* 2. LVGL port + display
+     * 帧缓冲放**内部 DMA 内存**而不是 PSRAM：ESP32-S3 的 esp_ptr_dma_capable() 只覆盖内部
+     * DRAM（SOC_DMA_LOW~SOC_DMA_HIGH），PSRAM 会被 SPI 驱动判为不可 DMA，于是每笔 flush
+     * 每笔 flush 都要临时申请一块同样大小的内部 DMA 回弹缓冲；Wi-Fi / BLE 起来后这笔分配可能失败，
+     * 导致刷屏失败（进而 LVGL 卡死，见 periph_lcd_flush_cb 的注释）。
+     * 10 行缓冲 = 320*10*2 = 6.4 KB 内部内存（开机时、Wi-Fi / BLE 之前分配；内部 RAM 很紧，
+     * 不要再放大）。 */
     const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     ESP_RETURN_ON_ERROR(lvgl_port_init(&lvgl_cfg), TAG, "lvgl_port_init failed");
 
@@ -57,13 +94,16 @@ esp_err_t periph_lcd_init(void)
             .mirror_y = false,
         },
         .flags = {
-            .buff_dma = false,
-            .buff_spiram = true,
+            .buff_dma = true,
+            .buff_spiram = false,
         },
     };
 
     s_disp = lvgl_port_add_disp(&disp_cfg);
     ESP_RETURN_ON_FALSE(s_disp != NULL, ESP_FAIL, TAG, "lvgl_port_add_disp failed");
+
+    /* 换成带错误处理的 flush 回调（见上） */
+    s_disp->driver->flush_cb = periph_lcd_flush_cb;
 
     /* 默认屏幕设为深色，避免 LVGL 默认浅色主题导致白屏 */
     if (lvgl_port_lock(0)) {

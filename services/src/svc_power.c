@@ -57,11 +57,27 @@ static void touch_activity_cb(periph_touch_evt_t evt, const periph_touch_point_t
     }
 }
 
+/* IMU 运动：只负责熄屏唤醒，不刷新活动时间，避免持续晃动导致屏幕一直亮 */
+static void imu_motion_cb(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+
+    if (s_sleeping) svc_power_wake();
+}
+
 static void power_task(void *arg)
 {
     (void)arg;
+
+    /* 纳入 Task WDT：本任务 1 s 一圈，喂狗周期远小于超时 */
+    if (svc_watchdog_subscribe() != ESP_OK) {
+        ESP_LOGW(TAG, "task watchdog subscribe failed");
+    }
+
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        svc_watchdog_feed();
 
         /* 亮度停稳后落 NVS：滑块拖动期间只改硬件，不反复写 flash */
         if (s_bright_pending >= 0 &&
@@ -92,6 +108,7 @@ esp_err_t svc_power_init(void)
     periph_lcd_set_brightness(bright);
 
     periph_touch_register_callback(touch_activity_cb, NULL);
+    svc_event_bus_subscribe(SVC_EVENT_IMU_MOTION, imu_motion_cb, NULL);
     xTaskCreate(power_task, "power_task", 3072, NULL, 2, NULL);
 
     ESP_LOGI(TAG, "initialized (backlight timeout=%us, brightness=%u%%)",

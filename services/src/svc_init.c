@@ -14,11 +14,23 @@ esp_err_t services_init(void)
 {
     ESP_LOGI(TAG, "=== services init start ===");
 
+    /* 看门狗：失败不阻塞启动；自动重启在启动末尾由 main 打开 */
+    if (svc_watchdog_init() != ESP_OK) {
+        ESP_LOGW(TAG, "watchdog unavailable");
+    }
+
     ESP_ERROR_CHECK(svc_event_bus_init());
     ESP_LOGI(TAG, "event_bus initialized");
 
     ESP_ERROR_CHECK(svc_settings_init());
     ESP_ERROR_CHECK(svc_storage_init());
+
+    /* 蓝牙放最前面：控制器与主机（Bluedroid）都要内部 RAM，而且主机的工作队列 /
+     * 任务栈不能放 PSRAM；晚于 Wi-Fi / LVGL 初始化会要不到连续内存，报
+     * BLE_INIT: Malloc failed 或 btu_workqueue 失败。失败不影响启动。 */
+    if (svc_bt_init() != ESP_OK) {
+        ESP_LOGW(TAG, "bluetooth unavailable");
+    }
 
     ESP_ERROR_CHECK(svc_time_init());
     ESP_LOGI(TAG, "time initialized");
@@ -29,8 +41,19 @@ esp_err_t services_init(void)
     ESP_ERROR_CHECK(svc_power_init());
     ESP_LOGI(TAG, "power initialized");
 
+    ESP_ERROR_CHECK(svc_imu_init());
+    ESP_LOGI(TAG, "imu initialized");
+
     ESP_ERROR_CHECK(svc_notification_init());
     ESP_LOGI(TAG, "notification initialized");
+
+    ESP_ERROR_CHECK(svc_sysinfo_init());
+    ESP_LOGI(TAG, "sysinfo initialized");
+
+    /* 串口命令行：调试用途，失败不影响系统运行 */
+    if (svc_shell_start() != ESP_OK) {
+        ESP_LOGW(TAG, "console shell unavailable");
+    }
 
     ESP_LOGI(TAG, "=== services init done ===");
     return ESP_OK;

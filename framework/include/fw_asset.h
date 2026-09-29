@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 /**
- * @brief 初始化资源模块（Scope A 无外部资源，仅占位）
+ * @brief 初始化资源模块（字体与符号已内置，不加载外部资源，这里只打一条日志）
  */
 esp_err_t fw_asset_init(void);
 

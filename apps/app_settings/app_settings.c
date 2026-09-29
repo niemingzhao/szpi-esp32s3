@@ -13,8 +13,6 @@
 #include "fw_common.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
-#include "esp_chip_info.h"
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -534,19 +532,23 @@ static void build_about(lv_obj_t *page)
 {
     lv_obj_t *c = content_of(page);
 
-    esp_chip_info_t ci;
-    esp_chip_info(&ci);
+    /* 运行信息统一从 Services 取，App 不直接调 IDF（分层约束） */
+    svc_sysinfo_t si;
+    if (svc_sysinfo_get(&si) != ESP_OK) {
+        memset(&si, 0, sizeof(si));
+    }
 
     char buf[320];
     snprintf(buf, sizeof(buf),
              "SZPI-OS %s\n"
              "ESP-IDF %s\n"
-             "芯片 ESP32-S3，%d 核\n"
+             "芯片 ESP32-S3，%u 核\n"
              "内部 RAM 剩余 %u KB\n"
              "PSRAM 剩余 %u KB",
-             SZPI_OS_VERSION, esp_get_idf_version(), ci.cores,
-             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
-             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+             SZPI_OS_VERSION, (si.idf_version != NULL) ? si.idf_version : "-",
+             (unsigned)si.chip_cores,
+             (unsigned)(si.heap_internal_free / 1024),
+             (unsigned)(si.heap_psram_free / 1024));
 
     lv_obj_t *l = lv_label_create(c);
     lv_label_set_text(l, buf);

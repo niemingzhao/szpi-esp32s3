@@ -5,14 +5,16 @@
  *
  * 已支持：Wi-Fi STA（启动 / 停止 / 扫描 / 连接 / 断开 / 自动重连 / 状态）、
  *         凭据持久化（NVS 命名空间 wifi）、事件发布、连接成功后触发 SNTP、
- *         HTTP GET / POST。
- * 未支持：SmartConfig、MQTT、WebSocket、OTA。
+ *         HTTP GET / POST、SmartConfig 配网、AP + HTTP 配网页。
+ * MQTT / WebSocket / OTA 在各自的服务里（svc_mqtt / svc_ws / svc_ota）。
  */
 
 #include "svc_common.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
+#include "esp_smartconfig.h"
+#include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -39,6 +41,7 @@ static volatile bool s_user_disconnect = false;
 static volatile bool s_scan_done = false;
 static volatile uint8_t s_retry_count = 0;
 static svc_net_status_t s_status;
+static volatile bool s_smartconfig = false;      /* SmartConfig 配网中 */
 static SemaphoreHandle_t s_status_mux = NULL;   /* s_status 由 Wi-Fi 事件任务写、被任意任务读 */
 
 static void status_lock(void)
@@ -413,14 +416,290 @@ esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len)
     return (buf[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
+/* ------------------------------- SmartConfig ------------------------------- */
+
+/* 手机 App（ESPTouch）把 SSID / 密码广播出来，这里收到后直接连接并持久化 */
+static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    (void)base;
+
+    if (id == SC_EVENT_GOT_SSID_PSWD) {
+        const smartconfig_event_got_ssid_pswd_t *e =
+            (const smartconfig_event_got_ssid_pswd_t *)data;
+
+        svc_net_wifi_creds_t creds;
+        memset(&creds, 0, sizeof(creds));
+        strlcpy(creds.ssid, (const char *)e->ssid, sizeof(creds.ssid));
+        strlcpy(creds.password, (const char *)e->password, sizeof(creds.password));
+        ESP_LOGI(TAG, "smartconfig got ssid: %s", creds.ssid);
+
+        esp_smartconfig_stop();
+        s_smartconfig = false;
+        svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
+    } else if (id == SC_EVENT_SEND_ACK_DONE) {
+        ESP_LOGI(TAG, "smartconfig finished");
+        esp_smartconfig_stop();
+        s_smartconfig = false;
+    }
+}
+
 esp_err_t svc_net_smartconfig_start(void)
 {
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    if (s_smartconfig) return ESP_OK;
+
+    /* 配网期间 STA 必须在跑（监听手机广播） */
+    esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
+    if (err != ESP_OK) return err;
+
+    err = esp_event_handler_instance_register(SC_EVENT, ESP_EVENT_ANY_ID, handle_sc_event, NULL, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "smartconfig handler register failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_smartconfig_set_type(SC_TYPE_ESPTOUCH);
+    if (err != ESP_OK) return err;
+
+    const smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
+    err = esp_smartconfig_start(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "smartconfig start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    s_smartconfig = true;
+    ESP_LOGI(TAG, "smartconfig started (waiting for ESPTouch)");
+    return ESP_OK;
 }
 
 esp_err_t svc_net_smartconfig_stop(void)
 {
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!s_smartconfig) return ESP_ERR_INVALID_STATE;
+
+    esp_err_t err = esp_smartconfig_stop();
+    s_smartconfig = false;
+    ESP_LOGI(TAG, "smartconfig stopped");
+    return err;
+}
+
+/* ------------------------------ AP / Web 配网 ------------------------------ */
+
+static httpd_handle_t s_prov_httpd = NULL;
+static esp_netif_t *s_prov_netif = NULL;
+static volatile bool s_prov_active = false;
+
+/* 极简 URL 解码：%XX → 字符，'+' → 空格 */
+static void url_decode(char *dst, size_t dst_len, const char *src)
+{
+    size_t di = 0;
+
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dst_len; si++) {
+        char c = src[si];
+        if (c == '+') {
+            dst[di++] = ' ';
+        } else if (c == '%' && src[si + 1] != '\0' && src[si + 2] != '\0') {
+            char hex[3] = { src[si + 1], src[si + 2], '\0' };
+            dst[di++] = (char)strtol(hex, NULL, 16);
+            si += 2;
+        } else {
+            dst[di++] = c;
+        }
+    }
+    dst[di] = '\0';
+}
+
+/* 从 x-www-form-urlencoded 里取字段（值自动解码）；没找到返回 false */
+static bool form_get(const char *body, const char *key, char *out, size_t out_len)
+{
+    size_t klen = strlen(key);
+    const char *p = body;
+
+    while ((p = strstr(p, key)) != NULL) {
+        if ((p == body || p[-1] == '&') && p[klen] == '=') {
+            const char *val = p + klen + 1;
+            const char *end = strchr(val, '&');
+            size_t vlen = (end != NULL) ? (size_t)(end - val) : strlen(val);
+
+            char raw[128];
+            if (vlen >= sizeof(raw)) vlen = sizeof(raw) - 1;
+            memcpy(raw, val, vlen);
+            raw[vlen] = '\0';
+            url_decode(out, out_len, raw);
+            return true;
+        }
+        p += klen;
+    }
+    return false;
+}
+
+static esp_err_t prov_get_handler(httpd_req_t *req)
+{
+    static const char page[] =
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>SZPI-OS 配网</title></head><body>"
+        "<h3>SZPI-OS Wi-Fi 配网</h3>"
+        "<form method=\"post\" action=\"/save\">"
+        "SSID<br><input name=\"ssid\" maxlength=\"32\" size=\"24\"><br><br>"
+        "密码<br><input name=\"password\" type=\"password\" maxlength=\"64\" size=\"24\"><br><br>"
+        "<button type=\"submit\">保存并连接</button></form>"
+        "</body></html>";
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t prov_save_handler(httpd_req_t *req)
+{
+    char body[256];
+    int limit = (req->content_len < (int)sizeof(body) - 1) ? (int)req->content_len : (int)sizeof(body) - 1;
+    if (limit <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+
+    int rd = httpd_req_recv(req, body, limit);
+    if (rd <= 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+        return ESP_FAIL;
+    }
+    body[rd] = '\0';
+
+    char ssid[33] = { 0 };
+    char pass[65] = { 0 };
+    if (!form_get(body, "ssid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
+        return ESP_FAIL;
+    }
+    form_get(body, "password", pass, sizeof(pass));
+
+    static const char ok_page[] =
+        "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>"
+        "<h3>已保存</h3><p>SZPI-OS 正在连接该网络，可以关闭此页面。</p></body></html>";
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send(req, ok_page, HTTPD_RESP_USE_STRLEN);
+
+    ESP_LOGI(TAG, "provisioning: got ssid '%s'", ssid);
+
+    svc_net_wifi_creds_t creds;
+    memset(&creds, 0, sizeof(creds));
+    strlcpy(creds.ssid, ssid, sizeof(creds.ssid));
+    strlcpy(creds.password, pass, sizeof(creds.password));
+    svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
+
+    /* 热点与 HTTP 服务在连上目标 AP（拿到 IP）后由事件回调关闭 */
+    return ESP_OK;
+}
+
+/* 配网成功（收到 IP）后自动收尾：不在 Wi-Fi 事件任务里直接停 Wi-Fi */
+static void prov_connected_cb(const svc_event_t *evt, void *user)
+{
+    (void)evt;
+    (void)user;
+
+    if (s_prov_active) {
+        svc_net_prov_stop();
+    }
+}
+
+esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
+{
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    if (s_prov_active) return ESP_OK;
+
+    const char *ssid = (ap_ssid != NULL && ap_ssid[0] != '\0') ? ap_ssid : "SZPI-OS-Setup";
+
+    if (s_prov_netif == NULL) {
+        s_prov_netif = esp_netif_create_default_wifi_ap();
+        if (s_prov_netif == NULL) return ESP_FAIL;
+    }
+
+    wifi_config_t wc;
+    memset(&wc, 0, sizeof(wc));
+    strlcpy((char *)wc.ap.ssid, ssid, sizeof(wc.ap.ssid));
+    wc.ap.ssid_len = (uint8_t)strlen(ssid);
+    wc.ap.channel = 1;
+    wc.ap.max_connection = 2;
+    wc.ap.authmode = WIFI_AUTH_OPEN;
+    if (ap_password != NULL && strlen(ap_password) >= 8) {
+        strlcpy((char *)wc.ap.password, ap_password, sizeof(wc.ap.password));
+        wc.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    }
+
+    /* 切到 APSTA 需要停一次再起（STA 的配置与凭据会保留） */
+    esp_wifi_stop();
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &wc);
+    if (err == ESP_OK) err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "provisioning AP start failed: %s", esp_err_to_name(err));
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        esp_wifi_start();
+        s_mode = WIFI_MODE_STA;
+        s_started = true;
+        return err;
+    }
+
+    s_mode = WIFI_MODE_APSTA;
+    s_started = true;
+    s_user_disconnect = false;
+    s_retry_count = 0;
+    s_connect_pending = true;      /* 已有凭据时 STA 侧照常自动连接 */
+
+    httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
+    hc.max_uri_handlers = 4;
+    hc.lru_purge_enable = true;
+    err = httpd_start(&s_prov_httpd, &hc);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "provisioning httpd start failed: %s", esp_err_to_name(err));
+        s_prov_httpd = NULL;
+        return err;
+    }
+
+    const httpd_uri_t uri_root = {
+        .uri = "/", .method = HTTP_GET, .handler = prov_get_handler, .user_ctx = NULL,
+    };
+    const httpd_uri_t uri_save = {
+        .uri = "/save", .method = HTTP_POST, .handler = prov_save_handler, .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(s_prov_httpd, &uri_root);
+    httpd_register_uri_handler(s_prov_httpd, &uri_save);
+
+    svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb, NULL);
+    s_prov_active = true;
+    ESP_LOGI(TAG, "provisioning started: AP '%s' (%s), browse http://192.168.4.1/",
+             ssid, (wc.ap.authmode == WIFI_AUTH_OPEN) ? "open" : "wpa2");
+    return ESP_OK;
+}
+
+esp_err_t svc_net_prov_stop(void)
+{
+    if (!s_prov_active) return ESP_OK;
+
+    s_prov_active = false;
+    svc_event_bus_unsubscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb);
+
+    if (s_prov_httpd != NULL) {
+        httpd_stop(s_prov_httpd);
+        s_prov_httpd = NULL;
+    }
+
+    /* 回到纯 STA 模式，继续连接目标 AP */
+    esp_wifi_stop();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_start();
+    s_mode = WIFI_MODE_STA;
+    s_started = true;
+
+    ESP_LOGI(TAG, "provisioning stopped");
+    return ESP_OK;
+}
+
+bool svc_net_prov_is_active(void)
+{
+    return s_prov_active;
 }
 
 esp_err_t svc_net_get_status(svc_net_status_t *status)
@@ -525,58 +804,4 @@ esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_
 
     esp_http_client_cleanup(c);
     return err;
-}
-
-esp_err_t svc_mqtt_connect(const char *uri, const char *username, const char *password)
-{
-    (void)uri;
-    (void)username;
-    (void)password;
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_mqtt_publish(const char *topic, const char *payload, int qos)
-{
-    (void)topic;
-    (void)payload;
-    (void)qos;
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_mqtt_subscribe(const char *topic, int qos, void (*cb)(const char *topic, const char *payload))
-{
-    (void)topic;
-    (void)qos;
-    (void)cb;
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_mqtt_disconnect(void)
-{
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_ws_connect(const char *uri, void (*cb)(const char *data, size_t len))
-{
-    (void)uri;
-    (void)cb;
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_ws_send(const char *data, size_t len)
-{
-    (void)data;
-    (void)len;
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_ws_disconnect(void)
-{
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t svc_ota_check_and_update(const char *url)
-{
-    (void)url;
-    return ESP_ERR_NOT_SUPPORTED;
 }

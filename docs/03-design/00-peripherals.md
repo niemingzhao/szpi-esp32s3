@@ -76,7 +76,7 @@ esp_err_t periph_lcd_draw_bitmap(int x1, int y1, int x2, int y2, const uint16_t 
 |----|---|
 | 分辨率 | 320×240 |
 | 像素格式 | RGB565 |
-| 帧缓冲 | 20 行高 (20*320*2 = 12.8 KB) 位于 PSRAM |
+| 帧缓冲 | 10 行高 (10*320*2 = 6.4 KB)，位于内置 DMA 内存 |
 | SPI 频率 | 80 MHz |
 | 默认旋转 | 0°（横屏，320 为水平方向） |
 | 背光 PWM | LEDC_CH0, 5 kHz, 10-bit |
@@ -388,7 +388,7 @@ esp_err_t peripherals_init_all(void) {
 
 ## 13. 资源使用约束
 
-- **LVGL framebuffer**：必须放 PSRAM
+- **LVGL 帧缓冲**：内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
 - **音频 buffer**：优先 PSRAM
 - **触摸 buffer**：内置 SRAM（实时性要求）
 - **IMU buffer**：内置 SRAM（实时性要求）

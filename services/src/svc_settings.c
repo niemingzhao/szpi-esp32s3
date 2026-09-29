@@ -143,3 +143,28 @@ esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_
     }
     return ESP_OK;
 }
+
+esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len)
+{
+    if (data == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(h, key, data, len);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len)
+{
+    if (buf == NULL || len == NULL || *len == 0) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_blob(h, key, buf, len);     /* *len 进为缓冲大小、出为实际长度 */
+    nvs_close(h);
+    return err;
+}

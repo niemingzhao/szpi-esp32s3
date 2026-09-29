@@ -32,6 +32,89 @@ static svc_notification_t s_last_posted;
 static char s_last_title[SVC_NOTI_TITLE_MAX];
 static char s_last_msg[SVC_NOTI_MSG_MAX];
 
+/* 提示音：默认开，可用 svc_notification_set_sound() 关闭 */
+#define NOTI_TONE_HZ   1000
+#define NOTI_TONE_MS   100
+static bool s_sound = true;
+
+/* ------------------------------- 持久化 ------------------------------- */
+
+#define NOTI_PERSIST_NS     "sys"
+#define NOTI_PERSIST_KEY    "noti_log"
+#define NOTI_PERSIST_MAGIC  0x4E4F5449u   /* "NOTI" */
+#define NOTI_PERSIST_MAX    8             /* 只存最近 8 条，控制 NVS 占用 */
+
+typedef struct {
+    uint32_t id;
+    uint32_t timestamp;
+    uint8_t type;
+    char title[SVC_NOTI_TITLE_MAX];
+    char message[SVC_NOTI_MSG_MAX];
+} noti_persist_item_t;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t count;
+    noti_persist_item_t items[NOTI_PERSIST_MAX];
+} noti_persist_t;
+
+static noti_persist_t s_persist;
+
+/* 持锁调用：把当前槽位写进 NVS（回调指针无法持久化，恢复后点击不跳转） */
+static void noti_save_locked(void)
+{
+    s_persist.magic = NOTI_PERSIST_MAGIC;
+    s_persist.count = 0;
+
+    for (int i = 0; i < SVC_NOTI_MAX && s_persist.count < NOTI_PERSIST_MAX; i++) {
+        if (!s_slots[i].used) continue;
+
+        noti_persist_item_t *it = &s_persist.items[s_persist.count];
+        memset(it, 0, sizeof(*it));
+        it->id = s_slots[i].noti.id;
+        it->timestamp = s_slots[i].noti.timestamp;
+        it->type = (uint8_t)s_slots[i].noti.type;
+        strlcpy(it->title, s_slots[i].title, sizeof(it->title));
+        strlcpy(it->message, s_slots[i].message, sizeof(it->message));
+        s_persist.count++;
+    }
+
+    svc_settings_set_blob(NOTI_PERSIST_NS, NOTI_PERSIST_KEY, &s_persist, sizeof(s_persist));
+}
+
+/* 持锁调用：从 NVS 恢复（on_click / user_data 不恢复） */
+static void noti_load_locked(void)
+{
+    size_t len = sizeof(s_persist);
+    memset(&s_persist, 0, sizeof(s_persist));
+
+    if (svc_settings_get_blob(NOTI_PERSIST_NS, NOTI_PERSIST_KEY, &s_persist, &len) != ESP_OK) return;
+    if (s_persist.magic != NOTI_PERSIST_MAGIC) return;
+    if (s_persist.count > NOTI_PERSIST_MAX) return;
+
+    uint32_t max_id = 0;
+    for (uint32_t i = 0; i < s_persist.count && i < SVC_NOTI_MAX; i++) {
+        const noti_persist_item_t *it = &s_persist.items[i];
+        svc_noti_slot_t *slot = &s_slots[i];
+
+        slot->used = true;
+        memset(&slot->noti, 0, sizeof(slot->noti));
+        slot->noti.id = it->id;
+        slot->noti.type = (svc_noti_type_t)it->type;
+        slot->noti.timestamp = it->timestamp;
+        strlcpy(slot->title, it->title, sizeof(slot->title));
+        strlcpy(slot->message, it->message, sizeof(slot->message));
+        slot->noti.title = slot->title;
+        slot->noti.message = slot->message;
+        slot->noti.on_click = NULL;
+        slot->noti.user_data = NULL;
+
+        if (it->id > max_id) max_id = it->id;
+    }
+
+    if (max_id + 1 > s_next_id) s_next_id = max_id + 1;
+}
+
 esp_err_t svc_notification_init(void)
 {
     if (s_mux == NULL) {
@@ -41,7 +124,8 @@ esp_err_t svc_notification_init(void)
 
     memset(s_slots, 0, sizeof(s_slots));
     s_next_id = 1;
-    ESP_LOGI(TAG, "initialized");
+    noti_load_locked();          /* 恢复上次运行的通知（回调指针无法恢复） */
+    ESP_LOGI(TAG, "initialized (%u restored)", (unsigned)svc_notification_get_count());
     return ESP_OK;
 }
 
@@ -96,6 +180,15 @@ esp_err_t svc_notification_post(const svc_notification_t *noti)
     noti_unlock();
 
     svc_event_bus_publish(SVC_EVENT_NOTIFICATION_POSTED, &s_last_posted, sizeof(s_last_posted));
+
+    /* 提示音：正在放音时不打断（单条 I2S 通路无法混音），其余情况播一声短提示 */
+    if (s_sound && svc_audio_get_state() == SVC_AUDIO_STATE_IDLE) {
+        svc_audio_play_tone_async(NOTI_TONE_HZ, NOTI_TONE_MS);
+    }
+
+    noti_lock();
+    noti_save_locked();
+    noti_unlock();
     return ESP_OK;
 }
 
@@ -116,6 +209,10 @@ esp_err_t svc_notification_dismiss(uint32_t noti_id)
 
     if (ret == ESP_OK) {
         svc_event_bus_publish(SVC_EVENT_NOTIFICATION_DISMISSED, &noti_id, sizeof(noti_id));
+
+        noti_lock();
+        noti_save_locked();
+        noti_unlock();
     }
     return ret;
 }
@@ -137,6 +234,10 @@ esp_err_t svc_notification_clear_all(void)
     for (size_t i = 0; i < n; i++) {
         svc_event_bus_publish(SVC_EVENT_NOTIFICATION_DISMISSED, &ids[i], sizeof(ids[i]));
     }
+
+    noti_lock();
+    noti_save_locked();
+    noti_unlock();
     return ESP_OK;
 }
 
@@ -192,4 +293,15 @@ esp_err_t svc_notification_find(uint32_t noti_id, svc_notification_t *out)
 
     noti_unlock();
     return ret;
+}
+
+esp_err_t svc_notification_set_sound(bool on)
+{
+    s_sound = on;
+    return ESP_OK;
+}
+
+bool svc_notification_get_sound(void)
+{
+    return s_sound;
 }

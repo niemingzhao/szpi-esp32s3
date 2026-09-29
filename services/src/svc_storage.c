@@ -7,6 +7,8 @@
 #include "svc_common.h"
 #include "periph_common.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +19,48 @@
 
 static const char *TAG = "svc.storage";
 
+#define SD_POLL_MS        1000    /* TF 卡在/不在 检测周期 */
+#define SD_MOUNT_RETRY    10      /* 没卡时每 10 次轮询才尝试挂载一次，避免刷日志 */
+#define SD_POLL_STACK     3072
+
+/* TF 卡热插拔：板子没有卡检测引脚，只能轮询"卡是否还能访问" */
+static void sd_poll_task(void *arg)
+{
+    (void)arg;
+
+    bool present = periph_storage_is_mounted(PERIPH_STORAGE_TF_CARD);
+    int retry = 0;
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(SD_POLL_MS));
+
+        if (!present) {
+            if (++retry < SD_MOUNT_RETRY) continue;
+            retry = 0;
+
+            if (periph_storage_mount(PERIPH_STORAGE_TF_CARD) == ESP_OK) {
+                present = true;
+                ESP_LOGI(TAG, "TF card inserted");
+                svc_event_bus_publish(SVC_EVENT_SD_MOUNTED, NULL, 0);
+            }
+            continue;
+        }
+
+        if (!periph_storage_tf_card_present()) {
+            ESP_LOGW(TAG, "TF card removed");
+            periph_storage_unmount(PERIPH_STORAGE_TF_CARD);
+            present = false;
+            svc_event_bus_publish(SVC_EVENT_SD_UNMOUNTED, NULL, 0);
+        }
+    }
+}
+
 esp_err_t svc_storage_init(void)
 {
+    if (xTaskCreate(sd_poll_task, "svc_sd_poll", SD_POLL_STACK, NULL, 3, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "sd poll task create failed");
+    }
+
     ESP_LOGI(TAG, "initialized");
     return ESP_OK;
 }

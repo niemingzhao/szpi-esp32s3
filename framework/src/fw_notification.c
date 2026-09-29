@@ -5,6 +5,7 @@
  *
  * 由状态栏的“通知”按钮打开，占满状态栏以下的显示区，右上角 × 关闭。
  * 订阅 SVC_EVENT_NOTIFICATION_POSTED / DISMISSED 刷新列表，POSTED 时弹 Toast。
+ * 单击一条通知 = 打开（触发点击回调）；长按一条 = 撤销这一条。
  */
 
 #include "fw_notification.h"
@@ -25,9 +26,19 @@ static void noti_item_cb(lv_event_t *e)
     /* 用通知 ID 而不是列表下标：列表重建后同帧点击也不会取错条目 */
     uint32_t noti_id = (uint32_t)(intptr_t)lv_event_get_user_data(e);
 
+    /* 长按单条：撤销这一条（与 Wi-Fi 磁贴长按清除凭据同一交互习惯） */
+    if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+        svc_notification_dismiss(noti_id);
+        return;
+    }
+
     svc_notification_t noti;
-    if (svc_notification_find(noti_id, &noti) == ESP_OK && noti.on_click != NULL) {
-        noti.on_click(noti.id, noti.user_data);
+    if (svc_notification_find(noti_id, &noti) == ESP_OK) {
+        if (noti.on_click != NULL) {
+            noti.on_click(noti.id, noti.user_data);
+        }
+        /* 广播点击事件：状态栏 / 角标等模块也能感知 */
+        svc_event_bus_publish(SVC_EVENT_NOTIFICATION_CLICKED, &noti_id, sizeof(noti_id));
     }
     fw_notification_hide();
 }
@@ -56,7 +67,11 @@ static void list_rebuild(void)
                  noti.title != NULL ? noti.title : "",
                  noti.message != NULL ? noti.message : "");
 
-        fw_ui_list_add(s_list, text, noti_item_cb, (void *)(intptr_t)noti.id);
+        lv_obj_t *item = fw_ui_list_add(s_list, text, noti_item_cb, (void *)(intptr_t)noti.id);
+        if (item != NULL) {
+            /* 长按单条通知 = 撤销这一条 */
+            lv_obj_add_event_cb(item, noti_item_cb, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)noti.id);
+        }
     }
 }
 

@@ -43,8 +43,16 @@ static void event_bus_dispatch_task(void *arg)
     (void)arg;
     svc_queued_t qevt;
 
+    /* 纳入 Task WDT：总线卡死时要能被看门狗发现 */
+    if (svc_watchdog_subscribe() != ESP_OK) {
+        ESP_LOGW(TAG, "task watchdog subscribe failed");
+    }
+
     while (true) {
-        if (xQueueReceive(s_queue, &qevt, portMAX_DELAY) != pdTRUE) {
+        /* 有限等待而非 portMAX_DELAY：空闲时也能周期喂狗 */
+        bool got = (xQueueReceive(s_queue, &qevt, pdMS_TO_TICKS(1000)) == pdTRUE);
+        svc_watchdog_feed();
+        if (!got) {
             continue;
         }
 

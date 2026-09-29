@@ -17,6 +17,15 @@
 #include "svc_notification.h"
 #include "svc_audio.h"
 #include "svc_net.h"
+#include "svc_ota.h"
+#include "svc_mqtt.h"
+#include "svc_ws.h"
+#include "svc_sysinfo.h"
+#include "svc_shell.h"
+#include "svc_imu.h"
+#include "svc_watchdog.h"
+#include "svc_bt.h"
+#include "svc_bt_hid.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,7 +34,10 @@ extern "C" {
 /**
  * @brief 初始化所有服务
  *
- * 顺序：EventBus → Settings → Storage → Time → Audio → Net → Power → Notification
+ * 顺序：Watchdog → EventBus → Settings → Storage → BT → Time → Audio → Net →
+ *       Power → IMU → Notification → SysInfo → Shell
+ *
+ * 蓝牙必须早于 Wi-Fi（内部内存最干净时初始化，见 AGENTS 4.6）。
  */
 esp_err_t services_init(void);
 

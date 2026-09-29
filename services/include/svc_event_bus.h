@@ -32,6 +32,10 @@ typedef enum {
     SVC_EVENT_WIFI_DISCONNECTED,
     SVC_EVENT_WIFI_CONNECT_FAILED,
 
+    /* 蓝牙 BLE（数据为 svc_bt_state_t / uint32_t 扫描到的设备数） */
+    SVC_EVENT_BT_STATE_CHANGED,
+    SVC_EVENT_BT_SCAN_DONE,
+
     /* 时间事件 */
     SVC_EVENT_TIME_SYNCED,
     SVC_EVENT_TIME_CHANGED,
@@ -51,6 +55,10 @@ typedef enum {
     SVC_EVENT_GESTURE_SWIPE_RIGHT,
     SVC_EVENT_GESTURE_SWIPE_UP,
     SVC_EVENT_GESTURE_SWIPE_DOWN,
+
+    /* IMU 运动 / 姿态（数据为 periph_imu_motion_t / periph_imu_orientation_t） */
+    SVC_EVENT_IMU_MOTION,
+    SVC_EVENT_IMU_ORIENTATION,
 
     /* 音频事件 */
     SVC_EVENT_AUDIO_PLAYBACK_STARTED,

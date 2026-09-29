@@ -17,6 +17,8 @@ extern "C" {
 
 /** 桌面 App 名称（fw_app_mgr 以它作为返回栈的栈底） */
 #define FW_APP_HOME_NAME   "Home"
+/** 启动参数最大长度（含结尾 0） */
+#define FW_APP_ARGS_MAX    128
 
 /**
  * @brief App 描述符
@@ -59,6 +61,23 @@ esp_err_t fw_app_mgr_register(const fw_app_desc_t *desc);
  * 会先暂停当前前台 App。内部自行加 LVGL 锁，可在任意任务中调用。
  */
 esp_err_t fw_app_mgr_launch(const char *name);
+
+/**
+ * @brief 启动 App 并传入参数（App 内用 fw_app_mgr_get_args() 读取）
+ */
+esp_err_t fw_app_mgr_launch_with_args(const char *name, const char *args);
+
+/**
+ * @brief 通过 URI 启动 App，形如 "szpi://Music?song=1" 或 "Music?song=1"
+ *
+ * 用于 App 间通信（APP-004）与启动参数（APP-007）。
+ */
+esp_err_t fw_app_mgr_launch_uri(const char *uri);
+
+/**
+ * @brief 当前 App 的启动参数（没有参数时返回空字符串）
+ */
+const char *fw_app_mgr_get_args(void);
 
 /**
  * @brief 返回上一级（暂停当前 App，恢复并显示栈中上一个）

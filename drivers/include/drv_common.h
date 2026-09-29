@@ -15,6 +15,7 @@
 #include "driver/gpio.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_touch_ft5x06.h"
+#include "esp_camera.h"
 #include "esp_timer.h"
 
 #ifdef __cplusplus
@@ -278,6 +279,35 @@ esp_err_t drv_es7210_set_volume_db(int8_t volume_db);
  * @brief 反初始化
  */
 esp_err_t drv_es7210_deinit(void);
+
+// ============================================================================
+// drv_gc0308 - 摄像头（DVP，SCCB 走 I2C1，PWDN 由 PCA9557.BIT2 控制）
+// ============================================================================
+
+/**
+ * @brief 初始化摄像头（RGB565 / QVGA / 2 帧缓冲在 PSRAM，传感器由 esp32-camera 识别）
+ */
+esp_err_t drv_gc0308_init(void);
+
+/**
+ * @brief 取一帧；用完必须调用 drv_gc0308_return_frame() 归还，否则帧缓冲会耗尽
+ */
+esp_err_t drv_gc0308_get_frame(camera_fb_t **out);
+
+/**
+ * @brief 归还一帧
+ */
+void drv_gc0308_return_frame(camera_fb_t *frame);
+
+/**
+ * @brief 切换分辨率（frame_size，如 FRAMESIZE_QVGA / FRAMESIZE_VGA）
+ */
+esp_err_t drv_gc0308_set_framesize(framesize_t size);
+
+/**
+ * @brief 反初始化并给摄像头掉电
+ */
+esp_err_t drv_gc0308_deinit(void);
 
 #ifdef __cplusplus
 }

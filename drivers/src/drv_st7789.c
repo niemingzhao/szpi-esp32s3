@@ -5,6 +5,7 @@
  */
 
 #include "drv_common.h"
+#include "esp_log.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 

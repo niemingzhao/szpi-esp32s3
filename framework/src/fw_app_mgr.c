@@ -31,6 +31,7 @@ static fw_app_slot_t s_slots[FW_APP_MAX];
 static size_t s_count = 0;
 static int s_stack[FW_APP_STACK_MAX];
 static int s_top = -1;
+static char s_launch_args[FW_APP_ARGS_MAX];
 
 static int app_find(const char *name)
 {
@@ -98,7 +99,7 @@ esp_err_t fw_app_mgr_register(const fw_app_desc_t *desc)
     return ESP_OK;
 }
 
-esp_err_t fw_app_mgr_launch(const char *name)
+static esp_err_t app_launch(const char *name)
 {
     if (name == NULL) return ESP_ERR_INVALID_ARG;
 
@@ -157,6 +158,47 @@ esp_err_t fw_app_mgr_launch(const char *name)
     lvgl_port_unlock();
     ESP_LOGI(TAG, "launched app: %s", name);
     return ESP_OK;
+}
+
+esp_err_t fw_app_mgr_launch(const char *name)
+{
+    s_launch_args[0] = '\0';
+    return app_launch(name);
+}
+
+esp_err_t fw_app_mgr_launch_with_args(const char *name, const char *args)
+{
+    if (args != NULL) {
+        strncpy(s_launch_args, args, sizeof(s_launch_args) - 1);
+        s_launch_args[sizeof(s_launch_args) - 1] = '\0';
+    } else {
+        s_launch_args[0] = '\0';
+    }
+    return app_launch(name);
+}
+
+esp_err_t fw_app_mgr_launch_uri(const char *uri)
+{
+    if (uri == NULL) return ESP_ERR_INVALID_ARG;
+
+    /* 形如 "szpi://Music?song=1" 或 "Music?song=1" */
+    const char *p = strstr(uri, "://");
+    p = (p != NULL) ? (p + 3) : uri;
+
+    const char *q = strchr(p, '?');
+    size_t n = (q != NULL) ? (size_t)(q - p) : strlen(p);
+    if (n == 0 || n >= FW_APP_ARGS_MAX) return ESP_ERR_INVALID_ARG;
+
+    char name[FW_APP_ARGS_MAX];
+    memcpy(name, p, n);
+    name[n] = '\0';
+
+    return fw_app_mgr_launch_with_args(name, (q != NULL) ? (q + 1) : NULL);
+}
+
+const char *fw_app_mgr_get_args(void)
+{
+    return s_launch_args;
 }
 
 esp_err_t fw_app_mgr_back(void)

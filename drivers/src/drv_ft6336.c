@@ -5,6 +5,7 @@
  */
 
 #include "drv_common.h"
+#include "esp_log.h"
 #include "esp_lcd_touch_ft5x06.h"
 
 static const char *TAG = "drv.ft6336";

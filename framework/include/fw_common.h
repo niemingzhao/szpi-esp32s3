@@ -19,6 +19,7 @@
 #include "fw_notification.h"
 #include "fw_control_center.h"
 #include "fw_input.h"
+#include "fw_lockscreen.h"
 #include "fw_boot_animation.h"
 
 #ifdef __cplusplus

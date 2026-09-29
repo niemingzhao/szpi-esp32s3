@@ -5,6 +5,14 @@ CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 
+# FreeRTOS 运行时统计：DBG-003 性能监控要算任务 CPU 占用（uxTaskGetSystemState）
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# GCC 14 把一批警告默认升级成错误；LVGL 8.3 自带的 lodepng 会因此编译失败（uint32_t* vs unsigned*）
+CONFIG_COMPILER_DISABLE_GCC14_WARNINGS=y
+
 # Bluetooth
 CONFIG_BT_ENABLED=y
 
@@ -14,6 +22,17 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# 给"只能用内部内存"的分配（DMA / FreeRTOS 对象 / BLE 控制器）预留的内部 RAM。
+# IDF 默认 32768；实测本机内部 RAM 很紧（Wi-Fi 关联 + BLE 广播 + SPIFFS 挂载同时发生时会连
+# 一个互斥量都创建不出来，见 AGENTS 4.2），降到 16 KB：大块 DMA 缓冲都在开机早期分配，
+# 运行期只有小请求，16 KB 足够。
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384
+
+# Wi-Fi 静态收发缓冲：默认 16/16，每块约 1.6 KB 且只能用内部 RAM。本机只跑 UI / HTTP，
+# 8/8 足够，能省下十几 KB 内部 RAM。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
 
 # CPU
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
@@ -31,5 +50,33 @@ CONFIG_LV_COLOR_16_SWAP=y
 CONFIG_LV_MEM_CUSTOM=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
-CONFIG_LV_USE_PNG=n
-CONFIG_LV_USE_GIF=n
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_USE_PNG=y
+CONFIG_LV_USE_GIF=y
+
+# SPIFFS：长文件名（与硬件规格一致，改后首次挂载会重新格式化存储分区）
+CONFIG_SPIFFS_OBJ_NAME_LEN=128
+
+# 蓝牙：只用 BLE 4.2（01-hardware-spec.md 的目标配置）。
+# IDF 默认把 5.0 特性打开，而扩展广播 / 周期广播会明显增加控制器内存：
+# 本板实测 BLE_INIT: Malloc failed -> 控制器断言 -> 重启循环，所以必须显式关掉。
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+# CONFIG_BT_BLE_50_FEATURES_SUPPORTED is not set
+
+# BLE 内存：控制器初始化时要一块 30 KB 的连续内存，实测在首屏之后（WiFi/LVGL 已占用）会
+# "BLE_INIT: Malloc failed" + 断言重启 —— 对策是把 svc_bt_init() 提前到 Wi-Fi 之前
+# （见 AGENTS 4.6），并让 BT/BLE 的动态内存优先用 PSRAM。
+CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y
+CONFIG_BT_ACL_CONNECTIONS=2
+
+# 控制器活动实例数（ble_max_act）：这个值同时决定控制器"环境内存池"的大小。
+# 曾经为了省内存改成 2，结果 LE Set Advertising Enable 被控制器以 HCI 0x07 Memory Full
+# 拒收（adv 环境分配不出来），手机搜不到设备。改回 IDF 默认 6，别再往下调。
+CONFIG_BT_CTRL_BLE_MAX_ACT=6
+
+# 不用 DTM（直接测试模式），关掉少占一点控制器内存
+# CONFIG_BT_CTRL_DTM_ENABLE is not set
+
+# Camera (GC0308 / DVP)：SCCB 走新版 i2c_master 驱动 + I2C1（引脚 GPIO1/2 与 I2C0 复用）
+CONFIG_SCCB_HARDWARE_I2C_DRIVER_NEW=y
+CONFIG_SCCB_HARDWARE_I2C_PORT1=y

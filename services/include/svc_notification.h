@@ -75,6 +75,16 @@ esp_err_t svc_notification_get(size_t index, svc_notification_t *out);
  */
 esp_err_t svc_notification_find(uint32_t noti_id, svc_notification_t *out);
 
+/**
+ * @brief 新通知提示音开关（默认开；正在放音时不打断）
+ */
+esp_err_t svc_notification_set_sound(bool on);
+
+/**
+ * @brief 查询提示音开关
+ */
+bool svc_notification_get_sound(void);
+
 #ifdef __cplusplus
 }
 #endif

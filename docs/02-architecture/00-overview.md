@@ -110,13 +110,22 @@ SZPI-OS 的架构满足：
 **职责**：提供跨多个 Peripherals 的业务服务，处理协议、状态、并发。
 
 **包含**：
+- `svc_event_bus` - 事件总线（贯穿所有层）
+- `svc_settings` - 配置持久化（NVS，含 blob）
+- `svc_storage` - 文件系统、路径管理、应用沙箱
 - `svc_time` - 时间管理（SNTP 同步、时区）
 - `svc_audio` - 音频播放、录音、提示音
-- `svc_net` - Wi-Fi、BLE、HTTP、MQTT、WebSocket
-- `svc_storage` - 文件系统、路径管理、应用沙箱
+- `svc_net` - Wi-Fi 状态机、HTTP 客户端、SmartConfig / AP 配网
+- `svc_bt` - 蓝牙 BLE（广播、GATT 从机、扫描）
+- `svc_mqtt` - MQTT 客户端
+- `svc_ws` - WebSocket 客户端
+- `svc_ota` - HTTPS OTA 升级
+- `svc_power` - 电源管理（背光超时、休眠、唤醒）
+- `svc_imu` - IMU 运动 / 姿态
+- `svc_watchdog` - Task Watchdog（喂狗超时自动重启）
 - `svc_notification` - 通知队列、分类、回调
-- `svc_power` - 电源管理（背光超时、休眠）
-- `svc_event_bus` - 事件总线（贯穿所有层）
+- `svc_sysinfo` - 系统信息（内存、复位原因、运行时间）
+- `svc_shell` - 串口命令行
 
 **约束**：
 - 调用 Peripherals 层
@@ -281,14 +290,14 @@ App 调用 svc_settings_set(key, value)
 
 | 区域 | 大小 | 用途 |
 |------|------|------|
-| 内置 SRAM | 512 KB | FreeRTOS 任务栈、LVGL 控制块、关键 buffer |
-| PSRAM | 8 MB | LVGL framebuffer、字体、图片、视频缓冲 |
+| 内置 SRAM | 512 KB | FreeRTOS 任务栈、LVGL 控制块、LVGL 帧缓冲、关键 buffer |
+| PSRAM | 8 MB | 字体、图片、视频缓冲、大块动态数据 |
 | Flash App (factory + ota_0) | 各 4 MB | 用户应用、字库、图片素材 |
 | Flash App (ota_1) | 4 MB | OTA 备份 |
 | Flash FS (storage) | 3 MB | SPIFFS：配置、脚本、用户数据 |
 
 **关键原则**：
-- LVGL framebuffer 强制放在 PSRAM
+- LVGL 帧缓冲放内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
 - 所有非关键 buffer 优先 PSRAM
 - 关键实时路径（音频解码、触摸）放内置 SRAM
 

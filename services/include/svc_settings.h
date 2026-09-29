@@ -35,6 +35,10 @@ esp_err_t svc_settings_get_u8(const char *ns, const char *key, uint8_t *val, uin
 esp_err_t svc_settings_set_str(const char *ns, const char *key, const char *val);
 esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_t len, const char *def);
 
+/* blob：get 时 *len 进为缓冲大小、出为实际长度 */
+esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len);
+esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len);
+
 #ifdef __cplusplus
 }
 #endif

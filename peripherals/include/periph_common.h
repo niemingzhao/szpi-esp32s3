@@ -16,6 +16,7 @@
 #include "periph_storage.h"
 #include "periph_io_exp.h"
 #include "periph_button.h"
+#include "periph_camera.h"      /* 摄像头按需初始化（不参与 peripherals_init_all） */
 
 #ifdef __cplusplus
 extern "C" {
