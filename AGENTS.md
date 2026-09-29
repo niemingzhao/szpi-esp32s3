@@ -91,6 +91,8 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 
 ## 四、AI 易踩的坑（按出错的代价排序）
 
+界面尺寸、圆角、间距、配色与交互统一以 `docs/03-design/02-ui-system.md` 第 14 节《UI 视觉规范》为准；新增或改动界面照现有规格做，不要另起一套风格。
+
 ### 4.1 LVGL 调用必须加锁
 
 在非 LVGL 任务里（触摸扫描任务、App 回调、Services、Framework 初始化）调用任何 LVGL API，**必须**用 `lvgl_port_lock(0)` / `lvgl_port_unlock()` 包起来。`lvgl_port` 用的是递归互斥锁，因此在 LVGL 事件回调内再次加锁是安全的。

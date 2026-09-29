@@ -2,6 +2,8 @@
 
 UI 系统基于 LVGL v8.3.0 + esp_lvgl_port v1.4.0，由 Framework 层统一封装。
 
+新增或修改界面前，先读第 14 节《UI 视觉规范》：尺寸、圆角、间距、配色令牌与交互都以那一节为准，保持与现有界面同一套观感。
+
 ## 1. UI 系统架构
 
 ```
@@ -366,5 +368,72 @@ lv_indev_t *indev = lv_indev_drv_register(&indev_drv);
 ```c
 lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_IN, 250, 0, false);
 ```
+
+## 14. UI 视觉规范（新增 / 修改界面必须遵守）
+
+后续所有界面都按下表执行，与现有界面保持同一套观感；不要另起一套风格。单位均为 LVGL 像素（屏幕 320×240，状态栏 28 px，应用内容区 320×212）。
+
+### 14.1 尺寸与间距
+
+| 元素 | 规格 |
+|------|------|
+| 状态栏 | 高 28（`FW_STATUSBAR_H`），底部 1 px 线 |
+| 状态栏按钮 | 32 × 20，另加 `lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
+| 状态栏位置 | 左：返回 x=8、主页 x=48；右：通知 -48、控制中心 -8、Wi-Fi 图标 -88、音乐图标 -108 |
+| 页面内边距 | 12（内容区 `pad_all`），行间距 8（`pad_row`） |
+| 入口卡片 / 列表项 | 高 50 / 高 38 |
+| 浮层标题行 | 标题左上 (12, 14)；分隔线 y=44，宽 `w - 24`；内容从 y=50 开始，宽 `w - 16` |
+| 浮层内控件 | Wi-Fi 整行磁贴高 46；滑块行高 30（标签宽 40、间距 10），滑块高 16；试听按钮 120 × 36 |
+| 桌面格子 | 70 × 86，4 列，列间距 8，网格整体上边距 6 |
+| 对话框 | 面板 268 × 156；正文宽 244；按钮行 244 × 40 贴底；按钮 88 × 34 |
+| Toast | 宽 272，距底部 44 |
+| 通用组件 | 进度条面板 240 × 72；列表容器内边距 8、行距 4 |
+
+### 14.2 圆角与描边
+
+| 元素 | 圆角 | 描边 |
+|------|------|------|
+| 卡片 / 入口行 | 10 | 1 px `border` |
+| 小按钮 / 列表项 / 浮层按钮 | 6 ~ 8 | 1 px `border` |
+| 桌面格子 / 对话框面板 | 12 | 1 px `border` |
+| 状态栏 / 浮层遮罩 / 页面 | 0 | 状态栏底部画 1 px |
+
+阴影一律 `shadow_width = 0`：小屏低分辨率下阴影只会发糊。
+
+遮罩两层语义：浮层（通知 / 控制中心）用不透明的 `bg_primary`，只覆盖状态栏以下；对话框用全屏 50% 黑，模态到底。
+
+### 14.3 配色使用规则
+
+- 页面底 `bg_primary`；状态栏与浮层 `bg_secondary`；卡片、按钮、列表、Toast、对话框 `bg_card`
+- 正文 `text_primary`；说明与次要信息 `text_secondary`；禁用态 `text_disabled`
+- 主色 `accent` 只用于：图标、滑块指示条与圆点、主按钮（如对话框"确定"）、状态栏播放图标
+- 分隔线 `divider` 用于列表内分隔与桌面空槽描边；`border` 用于卡片 / 按钮 / 浮层的描边与状态栏底线
+- 语义色 `success` / `warning` / `error` 只用于状态提示与告警
+- 两套主题都必须完整可用：控件一律显式设色（见 5.1），不依赖 LVGL 自带主题
+
+### 14.4 字体与图标
+
+- 中文正文 14 px（`fw_asset_font_cn()`），标题 16 px（`fw_asset_font_cn_large()`）
+- 拉丁与数字：`fw_asset_font_14()` / `fw_asset_font_20()` / `fw_asset_font_24()`
+- 图标尺寸：状态栏 14，卡片与列表 20，桌面 24；优先用 LVGL 内置 `LV_SYMBOL_*`
+- 界面文案的汉字必须在字体子集内（见 4.9、7.1），改完跑 `python tools/check_cn_text.py`
+
+### 14.5 交互约定
+
+- "点击"统一 `LV_EVENT_SHORT_CLICKED`；滑块 / 复选框用 `LV_EVENT_VALUE_CHANGED`；长按用 `LV_EVENT_LONG_PRESSED`
+- 不使用滑动手势，也不做应用内标题栏：页内返回交给状态栏返回键（App 实现 `on_back`），主页交给状态栏主页键
+- 全局浮层挂在 `lv_layer_top()`，并确保 `lv_layer_top()` 本身不吞触摸（见 4.1）；浮层之间互斥
+- 屏幕切换动画统一 `LV_SCR_LOAD_ANIM_FADE_IN` + 250 ms；主题重建用 `LV_SCR_LOAD_ANIM_NONE`
+- 反馈统一 `fw_ui_toast()`（1500 ~ 2500 ms），确认类操作统一 `fw_ui_dialog()`
+- 所有文案遵循 AGENTS 的术语约定（`Wi-Fi`、`I2C`、`SPIFFS`、数字与单位间加空格等）
+
+### 14.6 新增界面自检清单
+
+1. 颜色只从 `fw_theme_color_*()` 取，不依赖 LVGL 自带主题
+2. 卡片 / 按钮 / 浮层都有 1 px `border`，`shadow_width = 0`
+3. 点击用 `SHORT_CLICKED`，滑块 / 复选框用 `VALUE_CHANGED`
+4. 文字走 `fw_asset_font_*`；新汉字加进 `tools/gen_cn_font.py` 的 `CN_CHARS` 后重新生成字体
+5. 深浅两个主题各看一遍（设置 → 显示 → 主题），确认没有看不见的控件、没有糊成一团的层次
+6. 跑 `python tools/check_ui_colors.py` 与 `python tools/check_cn_text.py`
 
 动画期间禁用触摸输入（避免误操作）。
