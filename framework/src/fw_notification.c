@@ -22,10 +22,11 @@ static bool s_visible = false;
 
 static void noti_item_cb(lv_event_t *e)
 {
-    size_t idx = (size_t)(intptr_t)lv_event_get_user_data(e);
+    /* 用通知 ID 而不是列表下标：列表重建后同帧点击也不会取错条目 */
+    uint32_t noti_id = (uint32_t)(intptr_t)lv_event_get_user_data(e);
 
     svc_notification_t noti;
-    if (svc_notification_get(idx, &noti) == ESP_OK && noti.on_click != NULL) {
+    if (svc_notification_find(noti_id, &noti) == ESP_OK && noti.on_click != NULL) {
         noti.on_click(noti.id, noti.user_data);
     }
     fw_notification_hide();
@@ -55,7 +56,7 @@ static void list_rebuild(void)
                  noti.title != NULL ? noti.title : "",
                  noti.message != NULL ? noti.message : "");
 
-        fw_ui_list_add(s_list, text, noti_item_cb, (void *)(intptr_t)i);
+        fw_ui_list_add(s_list, text, noti_item_cb, (void *)(intptr_t)noti.id);
     }
 }
 

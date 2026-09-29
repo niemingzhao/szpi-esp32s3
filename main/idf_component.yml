@@ -5,3 +5,4 @@ dependencies:
   lvgl/lvgl: "~8.3.0"
   espressif/esp_lvgl_port: "~1.4.0"
   espressif/esp_lcd_touch_ft5x06: "~1.0.7"
+  chmorgan/esp-libhelix-mp3: "~1.0.3"     # MP3 解码（helix），由 services 层直接调用

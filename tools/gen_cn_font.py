@@ -8,11 +8,11 @@
   2) 回退字体（--cs gb2312）：GB2312 一级字库（3755 个常用汉字）+ ASCII，
      默认 14 px / 2bpp，供 UI 字体在遇到字表外汉字时回退使用。
 
-用法：
-  python tools/gen_cn_font.py C:\\Windows\\Fonts\\NotoSansSC-VF.ttf --sizes 14,16
-  python tools/gen_cn_font.py C:\\Windows\\Fonts\\NotoSansSC-VF.ttf --cs gb2312 --sizes 14 --bpp 2
+用法（省略源文件路径时默认用工程内的 tools/fonts/NotoSansSC-VF.ttf）：
+  python tools/gen_cn_font.py --sizes 14,16
+  python tools/gen_cn_font.py --cs gb2312 --sizes 14 --bpp 2
 
-界面新增中文文案若出现方框，把该字加进 CN_CHARS 后重新生成 UI 字体。
+界面新增中文文案若出现方框，把该字加进 tools/cn_chars.py 的 CN_CHARS 后重新生成 UI 字体。
 """
 
 import argparse
@@ -179,7 +179,8 @@ def emit(ttf, size, out_path, name, chars, bpp, fallback):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('ttf')
+    ap.add_argument('ttf', nargs='?', default=None,
+                    help='源 TTF/OTF；省略时用工程内 tools/fonts/NotoSansSC-VF.ttf')
     ap.add_argument('--sizes', default='14,16')
     ap.add_argument('--cs', default='ui', choices=['ui', 'gb2312'])
     ap.add_argument('--bpp', type=int, default=0)
@@ -187,13 +188,17 @@ def main():
     args = ap.parse_args()
 
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ttf = args.ttf or os.path.join(here, 'tools', 'fonts', 'NotoSansSC-VF.ttf')
+    if not os.path.isfile(ttf):
+        raise SystemExit('找不到字体源文件：%s\n请把 NotoSansSC-VF.ttf（OFL 授权）放到 tools/fonts/，'
+                         '或显式传入路径。' % ttf)
     outdir = args.outdir or os.path.join(here, 'framework', 'assets')
 
     if args.cs == 'gb2312':
         size = int(args.sizes.split(',')[0])
         bpp = args.bpp or 2
         chars = set(chr(c) for c in ASCII_RANGE) | set(gb2312_level1())
-        emit(args.ttf, size, os.path.join(outdir, 'font_cn_extra.c'), 'font_cn_extra',
+        emit(ttf, size, os.path.join(outdir, 'font_cn_extra.c'), 'font_cn_extra',
              chars, bpp, 'lv_font_montserrat_14')
         return 0
 
@@ -201,7 +206,7 @@ def main():
     chars = set(chr(c) for c in ASCII_RANGE) | set(CN_CHARS)
     for s in args.sizes.split(','):
         size = int(s)
-        emit(args.ttf, size, os.path.join(outdir, 'font_cn%d.c' % size), 'font_cn%d' % size,
+        emit(ttf, size, os.path.join(outdir, 'font_cn%d.c' % size), 'font_cn%d' % size,
              chars, bpp, 'font_cn_extra')
     return 0
 

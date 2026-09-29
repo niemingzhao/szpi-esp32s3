@@ -174,3 +174,22 @@ esp_err_t svc_notification_get(size_t index, svc_notification_t *out)
     noti_unlock();
     return ret;
 }
+
+esp_err_t svc_notification_find(uint32_t noti_id, svc_notification_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+
+    noti_lock();
+
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    for (int i = 0; i < SVC_NOTI_MAX; i++) {
+        if (s_slots[i].used && s_slots[i].noti.id == noti_id) {
+            *out = s_slots[i].noti;
+            ret = ESP_OK;
+            break;
+        }
+    }
+
+    noti_unlock();
+    return ret;
+}

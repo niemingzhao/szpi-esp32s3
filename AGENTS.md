@@ -74,7 +74,7 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 |------|------|------|
 | `drivers/` | `pca9557`、`st7789`、`ft6336`、`qmi8658`、`es8311`、`i2c`、BOOT 按键、LEDC、BSP | 已实现（`es7210`、`gc0308` 规划中；TF 卡的 sdmmc/fatfs 挂载由 Peripherals 层的 `periph_storage` 直接用 IDF 组件完成，不单独设驱动） |
 | `peripherals/` | `periph_lcd_*`、`periph_touch_*`、`periph_audio_*`、`periph_imu_*`、`periph_storage_*`、`periph_io_exp_*`、`periph_button_*` | 部分实现：LCD/Touch/Button/IMU/Storage/IO/Audio 已实现（音频仅播放）；Camera 未包含 |
-| `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | event_bus / settings / storage / time / power / notification 已实现；net（Wi-Fi STA + HTTP）与 audio（WAV / tone 播放）已实现；MP3 / 录音 / SmartConfig / MQTT / WS / OTA 未实现 |
+| `services/` | `svc_event_bus`、`svc_settings`、`svc_time`、`svc_audio`、`svc_net`、`svc_storage`、`svc_notification`、`svc_power` | event_bus / settings / storage / time / power / notification 已实现；net（Wi-Fi STA + HTTP）与 audio（WAV / MP3 / tone 播放 + ES7210 录音）已实现；SmartConfig / MQTT / WS / OTA / 蓝牙未实现 |
 | `framework/` | `fw_app_mgr`、`fw_window`、`fw_input`、`fw_theme`、`fw_asset`、`fw_ui`、`fw_statusbar`、`fw_notification`、`fw_control_center`、`fw_boot_animation` | 已实现（状态栏集成返回 / 主页 / 通知 / 控制中心按钮；中文由 assets 的 Noto 子集 14/16 px 渲染；开机画面用官方 Logo + 提示音） |
 | `apps/` | `app_home`、`app_clock`、`app_settings` | 已实现这 3 个（Settings：Wi-Fi 扫描 / 免密重连 / 忘记、亮度、背光超时、主题（立即生效）、关于）；`app_music`、`app_file` 等其余 14 个规划中 |
 
@@ -145,10 +145,10 @@ Apps → Framework → Services → Peripherals → Drivers → ESP-IDF/FreeRTOS
 
 ### 4.9 中文界面文案与字体子集
 
-中文由 `framework/assets/font_cn14.c` / `font_cn16.c` 渲染（Noto Sans SC 栅格化，OFL 授权），是**只含界面用字的子集**，编译后分别约 21 KB / 27 KB。新增中文文案若出现方框，说明用到了字表外的字 —— 把该字加进 `tools/gen_cn_font.py` 的 `CN_CHARS` 并重新生成：
+中文由 `framework/assets/font_cn14.c` / `font_cn16.c` 渲染（Noto Sans SC 栅格化，OFL 授权），是**只含界面用字的子集**。新增中文文案若出现方框，说明用到了字表外的字 —— 把该字加进 `tools/cn_chars.py` 的 `CN_CHARS` 并重新生成（源字体在 `tools/fonts/NotoSansSC-VF.ttf`，路径可省略）：
 
 ```powershell
-python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --sizes 14,16
+python tools/gen_cn_font.py --sizes 14,16
 ```
 
 字体统一从 `fw_asset_font_cn()`（14 px 正文）/ `fw_asset_font_cn_large()`（16 px 标题）/ `fw_asset_font_14|20|24()`（拉丁）获取，不要直接引用字体变量。开机画面用 `framework/assets/image_lckfb_logo.c`（立创官方 120×120 资源，已裁掉非 16-bit-swap 分支）。
@@ -162,8 +162,8 @@ python tools/check_cn_text.py
 动态数据（如 Wi-Fi 名称、文件名）里的汉字不在字表内是正常的 —— UI 字体回退到 `font_cn_extra`（`--cs gb2312` 生成，GB2312 一级 3755 常用字，14 px / 2bpp），两条生成命令：
 
 ```powershell
-python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --cs gb2312 --sizes 14 --bpp 2
-python tools/gen_cn_font.py C:\Windows\Fonts\NotoSansSC-VF.ttf --sizes 14,16
+python tools/gen_cn_font.py --cs gb2312 --sizes 14 --bpp 2
+python tools/gen_cn_font.py --sizes 14,16
 ```
 
 回退链：`font_cn14`/`font_cn16` → `font_cn_extra` → `lv_font_montserrat_14`（FontAwesome 符号）。
@@ -210,6 +210,19 @@ Drivers 层不再使用旧版 `driver/i2c.h`（`i2c_driver_install()` 会打印�
 - 芯片驱动在自己的 `init()` 里 `drv_i2c_device_add(地址, 频率, &s_dev)` 挂设备，之后用 `drv_i2c_read_reg()` / `drv_i2c_write_reg()` 读写寄存器（内部是 `i2c_master_transmit_receive()` / `i2c_master_transmit()`）。
 - 触摸走 esp_lcd：`esp_lcd_new_panel_io_i2c()` 传入 `drv_i2c_bus_handle()` 时会由 `_Generic` 自动分派到 v2 实现，并且**必须显式给 `tp_io_config.scl_speed_hz`**（v2 不接受 0，v1 反而要求 0，别照抄旧例程）。
 - ES8311 音频 DAC 原先依赖已废弃的 `espressif/es8311`（只能用旧驱动、新版永不支持），现由 `drivers/src/drv_es8311.c` 自实现寄存器序列（源自该组件，Apache-2.0），只做 I2C 配置，I2S 数据通路仍在 `periph_audio`。时钟拓扑固定为 MCLK = 采样率 × 256，该比例下分频系数与采样率无关，所以只有一组系数。
+
+### 4.16 新增 / 删除源文件后必须重新配置
+
+`idf_component_register(SRC_DIRS src)` 里的目录是 **CMake 配置期**用 glob 展开的，新增或删除 .c/.h 文件后直接 `idf.py build` 不会重新扫描。典型表现是**链接期**报 `undefined reference to xxx`（源文件明明存在，只是没进库），或反过来报某个 .obj 找不到源文件。
+
+正确做法（改完文件结构先 reconfigure，再 build）：
+
+```powershell
+idf.py reconfigure
+idf.py build
+```
+
+`framework/assets/` 这类资源目录增删文件后同理。只改已有文件内容不需要 reconfigure。
 
 ---
 

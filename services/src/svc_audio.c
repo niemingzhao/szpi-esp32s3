@@ -3,15 +3,17 @@
  *
  * Services - Audio 实现
  *
- * play_task 串行处理播放请求：
+ * play_task 串行处理播放 / 录音请求：
  *   WAV（PCM 16-bit，单 / 双声道）→ periph_audio_write
  *   TONE                        → 正弦波合成
- * MP3（需解码器组件）、URL / 流、录音（ES7210）尚未支持。
+ *   录音（ES7210）               → periph_audio_read 写入 WAV 文件
+ * MP3（需解码器组件）、URL / 流尚未支持。
  */
 
 #include "svc_common.h"
 #include "periph_common.h"
 #include "esp_log.h"
+#include "mp3dec.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -37,6 +39,8 @@ typedef struct {
     char uri[AUDIO_URI_MAX];
     uint16_t tone_freq;
     uint32_t tone_duration_ms;
+    bool record;             /* 本次请求是录音（uri 为目标文件，max_seconds 为时长上限） */
+    uint32_t max_seconds;
 } audio_msg_t;
 
 static QueueHandle_t s_queue = NULL;
@@ -114,8 +118,158 @@ static bool wav_parse(FILE *f, wav_info_t *info)
     return false;
 }
 
+/* -------------------------------- MP3 播放 -------------------------------- */
+
+#define MP3_IN_BUF          (8 * 1024)                          /* 输入缓冲 */
+#define MP3_OUT_SAMPLES     (MAX_NCHAN * MAX_NGRAN * MAX_NSAMP)  /* 单帧最大 PCM 样点数 */
+#define MP3_REFILL_WATER    4096                                /* 缓冲低于此值就补数据 */
+
+static bool has_suffix(const char *path, const char *suffix)
+{
+    size_t lp = strlen(path);
+    size_t ls = strlen(suffix);
+    if (lp < ls) return false;
+
+    for (size_t i = 0; i < ls; i++) {
+        char a = path[lp - ls + i];
+        char b = suffix[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return false;
+    }
+    return true;
+}
+
+/* helix 解码 → 16-bit PCM → periph_audio_write；单声道帧复制成双声道 */
+static esp_err_t play_mp3(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        ESP_LOGE(TAG, "open failed: %s", path);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    HMP3Decoder dec = MP3InitDecoder();
+    uint8_t *in = malloc(MP3_IN_BUF);
+    int16_t *out = malloc(MP3_OUT_SAMPLES * sizeof(int16_t));
+    if (dec == NULL || in == NULL || out == NULL) {
+        ESP_LOGE(TAG, "mp3 buffer alloc failed");
+        if (dec != NULL) MP3FreeDecoder(dec);
+        free(in);
+        free(out);
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t ret = ESP_OK;
+    uint8_t *p = in;                 /* 当前解析位置 */
+    int left = 0;                    /* 缓冲中剩余字节 */
+    bool eof = false;
+    int cur_rate = 0;
+    uint32_t samples_out = 0;
+
+    ESP_LOGI(TAG, "playing mp3 %s", path);
+    enter_state(SVC_AUDIO_STATE_PLAYING);
+    svc_event_bus_publish(SVC_EVENT_AUDIO_PLAYBACK_STARTED, NULL, 0);
+    if (!s_muted) periph_audio_set_mute(false);
+
+    while (!s_stop_req) {
+        while (s_pause_req && !s_stop_req) vTaskDelay(pdMS_TO_TICKS(20));
+        if (s_stop_req) break;
+
+        /* 补数据：把还没解析的部分搬到缓冲开头，再读满 */
+        if (left < MP3_REFILL_WATER && !eof) {
+            if (left > 0) memmove(in, p, (size_t)left);
+            size_t rd = fread(in + left, 1, MP3_IN_BUF - (size_t)left, f);
+            if (rd == 0) eof = true;
+            left += (int)rd;
+            p = in;
+        }
+        if (left <= 0) break;                          /* 文件读完 */
+
+        int off = MP3FindSyncWord(p, left);
+        if (off < 0) {
+            left = 0;                                  /* 没有同步字：整段丢掉继续读 */
+            if (eof) break;
+            continue;
+        }
+        p += off;
+        left -= off;
+
+        int err = MP3Decode(dec, &p, &left, out, 0);
+        if (err == ERR_MP3_INDATA_UNDERFLOW) {
+            if (eof) break;
+            continue;                                  /* 补数据后再解 */
+        }
+        if (err != ERR_MP3_NONE) {
+            /* 坏帧：往后挪一字节，避免下一次又找到同一帧原地打转 */
+            if (left > 0) {
+                p += 1;
+                left -= 1;
+            }
+            continue;
+        }
+
+        MP3FrameInfo info;
+        MP3GetLastFrameInfo(dec, &info);
+        if (info.samprate <= 0 || info.nChans <= 0) continue;
+
+        /* 采样率变了就重配 I2S + ES8311（44.1 k / 48 k / 16 k 都支持） */
+        if (info.samprate != cur_rate) {
+            periph_audio_format_t fmt = {
+                .sample_rate = (periph_audio_sample_rate_t)info.samprate,
+                .bit_width = 16,
+                .channels = (uint8_t)(info.nChans == 1 ? 1 : 2),
+            };
+            esp_err_t ferr = periph_audio_set_format(PERIPH_AUDIO_DIR_PLAY, &fmt);
+            if (ferr != ESP_OK) {
+                ESP_LOGW(TAG, "mp3 %d Hz not supported: %s", info.samprate, esp_err_to_name(ferr));
+                ret = ferr;
+                break;
+            }
+            cur_rate = info.samprate;
+        }
+
+        int frames = info.outputSamps / info.nChans;
+        if (info.nChans == 1) {
+            for (int i = frames; i > 0; i--) {
+                int16_t s = out[i - 1];
+                out[2 * (i - 1)] = s;
+                out[2 * (i - 1) + 1] = s;
+            }
+        }
+
+        if (periph_audio_write((const uint8_t *)out,
+                               (size_t)frames * 2 * sizeof(int16_t), 0) != ESP_OK) {
+            ret = ESP_FAIL;
+            break;
+        }
+        samples_out += (uint32_t)frames;
+    }
+
+    free(out);
+    free(in);
+    MP3FreeDecoder(dec);
+    fclose(f);
+
+    periph_audio_set_mute(true);
+
+    if (ret != ESP_OK) {
+        notify(SVC_AUDIO_EVT_PLAYBACK_ERROR, SVC_AUDIO_STATE_IDLE, ret);
+        svc_event_bus_publish(SVC_EVENT_AUDIO_PLAYBACK_ERROR, NULL, 0);
+    }
+    enter_state(SVC_AUDIO_STATE_IDLE);
+    svc_event_bus_publish(SVC_EVENT_AUDIO_PLAYBACK_FINISHED, NULL, 0);
+    ESP_LOGI(TAG, "mp3 %s: %u samples", (ret == ESP_OK) ? "done" : "aborted", (unsigned)samples_out);
+    return ret;
+}
+
 static esp_err_t play_file(const char *path)
 {
+    if (has_suffix(path, ".mp3")) {
+        return play_mp3(path);
+    }
+
     FILE *f = fopen(path, "rb");
     if (f == NULL) {
         ESP_LOGE(TAG, "open failed: %s", path);
@@ -249,6 +403,97 @@ static esp_err_t play_tone(uint16_t freq, uint32_t ms)
     return ok ? ESP_OK : ESP_FAIL;
 }
 
+/* ------------------------------ 录音（ES7210） ------------------------------ */
+
+/* 写标准 44 字节 PCM WAV 头（固定 16-bit 立体声，采样率 AUDIO_SR_DEFAULT） */
+static void wav_write_header(FILE *f, uint32_t data_bytes)
+{
+    const uint16_t channels = 2;
+    const uint16_t bits = 16;
+    const uint32_t rate = (uint32_t)AUDIO_SR_DEFAULT;
+    const uint32_t byte_rate = rate * channels * bits / 8;
+    const uint16_t block_align = (uint16_t)(channels * bits / 8);
+    const uint32_t riff_size = 36 + data_bytes;
+    const uint32_t fmt_size = 16;
+    const uint16_t pcm = 1;
+
+    uint8_t h[44];
+    memset(h, 0, sizeof(h));
+    memcpy(&h[0], "RIFF", 4);
+    memcpy(&h[4], &riff_size, 4);
+    memcpy(&h[8], "WAVE", 4);
+    memcpy(&h[12], "fmt ", 4);
+    memcpy(&h[16], &fmt_size, 4);
+    memcpy(&h[20], &pcm, 2);
+    memcpy(&h[22], &channels, 2);
+    memcpy(&h[24], &rate, 4);
+    memcpy(&h[28], &byte_rate, 4);
+    memcpy(&h[32], &block_align, 2);
+    memcpy(&h[34], &bits, 2);
+    memcpy(&h[36], "data", 4);
+    memcpy(&h[40], &data_bytes, 4);
+
+    fseek(f, 0, SEEK_SET);
+    fwrite(h, 1, sizeof(h), f);
+}
+
+static esp_err_t record_wav(const char *path, uint32_t max_seconds)
+{
+    periph_audio_format_t fmt = {
+        .sample_rate = AUDIO_SR_DEFAULT, .bit_width = 16, .channels = 2,
+    };
+    esp_err_t err = periph_audio_set_format(PERIPH_AUDIO_DIR_RECORD, &fmt);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "record format failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) {
+        ESP_LOGE(TAG, "open failed: %s", path);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    uint8_t *buf = malloc(AUDIO_CHUNK);
+    if (buf == NULL) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    uint8_t placeholder[44] = { 0 };
+    fwrite(placeholder, 1, sizeof(placeholder), f);   /* 结束后回填真实长度 */
+
+    s_stop_req = false;
+    enter_state(SVC_AUDIO_STATE_RECORDING);
+    ESP_LOGI(TAG, "recording %s (max %us)", path, (unsigned)max_seconds);
+
+    const uint32_t limit = (uint32_t)AUDIO_SR_DEFAULT * 2 * 2 * max_seconds;   /* 16-bit 立体声字节数 */
+    uint32_t total = 0;
+    bool ok = true;
+
+    while (!s_stop_req && total < limit) {
+        size_t rd = 0;
+        if (periph_audio_read(buf, AUDIO_CHUNK, &rd, 200) != ESP_OK || rd == 0) {
+            ok = false;
+            break;
+        }
+        if (fwrite(buf, 1, rd, f) != rd) {
+            ok = false;
+            break;
+        }
+        total += (uint32_t)rd;
+    }
+
+    free(buf);
+    wav_write_header(f, total);
+    fclose(f);
+
+    enter_state(SVC_AUDIO_STATE_IDLE);
+    notify(SVC_AUDIO_EVT_RECORD_FINISHED, SVC_AUDIO_STATE_IDLE, ok ? ESP_OK : ESP_FAIL);
+    ESP_LOGI(TAG, "record %s: %u bytes", ok ? "done" : "aborted", (unsigned)total);
+    return ok ? ESP_OK : ESP_FAIL;
+}
+
 /* -------------------------------- play_task -------------------------------- */
 
 static void audio_task(void *arg)
@@ -262,7 +507,9 @@ static void audio_task(void *arg)
         s_stop_req = false;
         s_pause_req = false;
 
-        if (msg.type == SVC_AUDIO_SRC_FILE) {
+        if (msg.record) {
+            record_wav(msg.uri, msg.max_seconds);
+        } else if (msg.type == SVC_AUDIO_SRC_FILE) {
             play_file(msg.uri);
         } else if (msg.type == SVC_AUDIO_SRC_TONE) {
             play_tone(msg.tone_freq, msg.tone_duration_ms);
@@ -374,14 +621,27 @@ esp_err_t svc_audio_stop(void)
 
 esp_err_t svc_audio_record_start(const char *file_path, uint32_t max_seconds)
 {
-    (void)file_path;
-    (void)max_seconds;
-    return ESP_ERR_NOT_SUPPORTED;   /* ES7210 + I2S RX 尚未接入 */
+    if (file_path == NULL || file_path[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (s_state == SVC_AUDIO_STATE_RECORDING) return ESP_ERR_INVALID_STATE;
+
+    audio_msg_t msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.record = true;
+    msg.max_seconds = (max_seconds == 0) ? 60 : max_seconds;   /* 0 视为默认 60 秒上限 */
+    strlcpy(msg.uri, file_path, sizeof(msg.uri));
+
+    s_stop_req = true;                       /* 打断当前播放 */
+    if (xQueueOverwrite(s_queue, &msg) != pdTRUE) return ESP_FAIL;
+    return ESP_OK;
 }
 
 esp_err_t svc_audio_record_stop(void)
 {
-    return ESP_ERR_NOT_SUPPORTED;
+    if (s_state != SVC_AUDIO_STATE_RECORDING) return ESP_ERR_INVALID_STATE;
+
+    s_stop_req = true;                       /* 录音循环据此收尾并回填 WAV 头 */
+    return ESP_OK;
 }
 
 esp_err_t svc_audio_set_volume(uint8_t percent)

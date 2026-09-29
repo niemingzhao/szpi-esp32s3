@@ -20,12 +20,7 @@ typedef struct {
     void *user;
 } fw_dialog_state_t;
 
-typedef struct {
-    fw_dialog_btn_t btn;
-} fw_dialog_btn_ctx_t;
-
 static fw_dialog_state_t s_dialog;
-static fw_dialog_btn_ctx_t s_dialog_btns[FW_DIALOG_BTN_MAX];
 
 /* 按钮排列顺序（决定对话框里从左到右的次序） */
 static const fw_dialog_btn_t k_btn_order[] = {
@@ -105,12 +100,22 @@ esp_err_t fw_ui_progress_set(lv_obj_t *bar, uint8_t percent)
 
 /* --------------------------------- 对话框 --------------------------------- */
 
+/* 异步删除真正发生后才清状态：这样 close 到删除之间不会叠加第二个对话框 */
+static void dialog_scrim_deleted_cb(lv_event_t *e)
+{
+    lv_obj_t *scrim = lv_event_get_target(e);
+    if (s_dialog.scrim == scrim) {
+        s_dialog.scrim = NULL;
+        s_dialog.cb = NULL;
+        s_dialog.user = NULL;
+    }
+}
+
 static void dialog_btn_cb(lv_event_t *e)
 {
-    fw_dialog_btn_ctx_t *ctx = (fw_dialog_btn_ctx_t *)lv_event_get_user_data(e);
-    if (ctx == NULL) return;
+    /* 按钮 ID 按值随事件带过来（不再共用一份会被下一个对话框覆盖的数组） */
+    fw_dialog_btn_t btn = (fw_dialog_btn_t)(intptr_t)lv_event_get_user_data(e);
 
-    fw_dialog_btn_t btn = ctx->btn;
     fw_dialog_cb_t cb = s_dialog.cb;
     void *user = s_dialog.user;
 
@@ -123,7 +128,7 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
 {
     if (buttons == FW_DIALOG_BTN_NONE) return NULL;
     if (s_dialog.scrim != NULL) {
-        ESP_LOGW(TAG, "another dialog is already open");
+        ESP_LOGW(TAG, "dialog already open (wait until it is deleted)");
         return NULL;
     }
 
@@ -131,6 +136,7 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
 
     lv_obj_t *scrim = lv_obj_create(parent != NULL ? parent : lv_layer_top());
     lv_obj_set_size(scrim, lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
+    lv_obj_add_event_cb(scrim, dialog_scrim_deleted_cb, LV_EVENT_DELETE, NULL);
     lv_obj_set_pos(scrim, 0, 0);
     lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
@@ -185,8 +191,6 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
         if ((buttons & k_btn_order[i]) == 0) continue;
         if (n >= FW_DIALOG_BTN_MAX) break;
 
-        s_dialog_btns[n].btn = k_btn_order[i];
-
         bool primary = (k_btn_order[i] == FW_DIALOG_BTN_OK);
 
         lv_obj_t *btn = lv_btn_create(row);
@@ -198,7 +202,8 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_border_color(btn, primary ? fw_theme_color_accent() : fw_theme_color_border(), 0);
         lv_obj_set_style_text_font(btn, fw_asset_font_cn(), 0);
-        lv_obj_add_event_cb(btn, dialog_btn_cb, LV_EVENT_SHORT_CLICKED, &s_dialog_btns[n]);
+        lv_obj_add_event_cb(btn, dialog_btn_cb, LV_EVENT_SHORT_CLICKED,
+                            (void *)(intptr_t)k_btn_order[i]);
 
         lv_obj_t *bl = lv_label_create(btn);
         lv_label_set_text(bl, btn_text(k_btn_order[i]));
@@ -219,10 +224,9 @@ esp_err_t fw_ui_dialog_close(lv_obj_t *dlg)
 {
     lvgl_port_lock(0);
     if (s_dialog.scrim != NULL && (dlg == NULL || dlg == s_dialog.scrim)) {
+        /* 可能是在对话框自己的按钮回调里调用的，不能当场删活动对象；
+         * 状态留给 dialog_scrim_deleted_cb 清，删除生效前不允许再开新对话框 */
         lv_obj_del_async(s_dialog.scrim);
-        s_dialog.scrim = NULL;
-        s_dialog.cb = NULL;
-        s_dialog.user = NULL;
     }
     lvgl_port_unlock();
     return ESP_OK;

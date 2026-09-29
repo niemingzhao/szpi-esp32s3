@@ -68,6 +68,13 @@ size_t svc_notification_get_count(void);
  */
 esp_err_t svc_notification_get(size_t index, svc_notification_t *out);
 
+/**
+ * @brief 按通知 ID 查找
+ *
+ * 点击列表条目时用这个：列表可能已经重建，只有 ID 是稳定标识。
+ */
+esp_err_t svc_notification_find(uint32_t noti_id, svc_notification_t *out);
+
 #ifdef __cplusplus
 }
 #endif

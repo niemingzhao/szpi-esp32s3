@@ -5,8 +5,8 @@
 单独成文件的原因：tools/check_cn_text.py 与 tools/gen_cn_font.py 都要用它，
 而后者依赖 Pillow。放在一起会让自检脚本也强依赖 Pillow。
 
-新增中文文案时把新字加进来，然后重新生成字体：
-    python tools/gen_cn_font.py C:\\Windows\\Fonts\\NotoSansSC-VF.ttf --sizes 14,16
+新增中文文案时把新字加进来，然后重新生成字体（源字体在 tools/fonts/NotoSansSC-VF.ttf）：
+    python tools/gen_cn_font.py --sizes 14,16
 """
 
 CN_CHARS = (

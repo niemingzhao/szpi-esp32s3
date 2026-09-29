@@ -253,6 +253,32 @@ esp_err_t drv_es8311_set_mute(bool mute);
  */
 esp_err_t drv_es8311_deinit(void);
 
+// ============================================================================
+// drv_es7210 - 麦克风 ADC（I2C0 @ 0x41，与 ES8311 共用 I2S 总线）
+// ============================================================================
+
+/**
+ * @brief 初始化 ES7210（16-bit、I2S 格式 + 1xFS TDM、MIC 增益 30 dB、bias 2.87 V）
+ *
+ * 支持 MCLK = 采样率 × 256 的采样率：16 kHz / 44.1 kHz / 48 kHz
+ */
+esp_err_t drv_es7210_init(uint32_t sample_rate);
+
+/**
+ * @brief 运行期切换采样率（需同时重配 I2S 时钟）
+ */
+esp_err_t drv_es7210_set_sample_rate(uint32_t sample_rate);
+
+/**
+ * @brief ADC 数字增益 -95 ~ +32 dB（0 dB 为复位默认值）
+ */
+esp_err_t drv_es7210_set_volume_db(int8_t volume_db);
+
+/**
+ * @brief 反初始化
+ */
+esp_err_t drv_es7210_deinit(void);
+
 #ifdef __cplusplus
 }
 #endif

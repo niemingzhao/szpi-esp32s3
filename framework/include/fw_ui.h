@@ -66,6 +66,9 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
 
 /**
  * @brief 关闭对话框（dlg 为 NULL 时关闭当前对话框）
+ *
+ * 删除是异步的（可能在对话框自己的按钮回调里被调用）：关闭后要等删除生效
+ * （下一帧）才能再开新对话框，期间 `fw_ui_dialog()` 会返回 NULL 并告警。
  */
 esp_err_t fw_ui_dialog_close(lv_obj_t *dlg);
 
@@ -85,7 +88,10 @@ lv_obj_t *fw_ui_list(lv_obj_t *parent, const char *title);
 lv_obj_t *fw_ui_list_add(lv_obj_t *list, const char *text, lv_event_cb_t cb, void *user);
 
 /**
- * @brief 创建网格容器（ROW_WRAP，每行 cols 个，item_w/item_h 用于计算宽度）
+ * @brief 创建网格容器（ROW_WRAP，每行 cols 个）
+ *
+ * item_w 用于计算容器宽度（列间距 8、两侧内边距 6）；item_h 目前不参与排版，
+ * 卡片尺寸由调用方自己设置。
  */
 lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord_t item_h);
 
