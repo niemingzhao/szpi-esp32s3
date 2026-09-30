@@ -1,4 +1,4 @@
-# 硬件规格
+# SZPI-OS 硬件规格
 
 ## 总线与接口
 
@@ -11,14 +11,17 @@
 
 #### I2C 总线从设备
 
-| 设备 | I2C 地址 (7-bit) | 寄存器宽度 |
+| 设备 | I2C 地址（7-bit） | 寄存器宽度 |
 |------|----------------|-----------|
 | QMI8658 | 0x6A | 8-bit |
 | PCA9557PW | 0x19 | 8-bit |
 | FT6336 | 0x38 | 8-bit |
 | ES8311 | 0x18 | 8-bit |
 | ES7210 | 0x41 | 8-bit |
-| GC0308 (SCCB) | 0x21 | 8-bit |
+| GC0308（SCCB） | 0x21 | 8-bit |
+| GC2145（SCCB） | 0x3C | 8-bit |
+
+- 摄像头 SCCB（GC0308 / GC2145）由独立的 I2C1 控制器驱动，引脚复用 GPIO1 / GPIO2（与 I2C0 共用）
 
 ### SPI 总线（LCD 专用）
 
@@ -29,12 +32,12 @@
 | DC | GPIO39 | 数据/命令选择 |
 | CS | PCA9557.BIT0 | 由 IO 扩展芯片控制 |
 | RST | NC | 硬件未接，靠 ST7789 软件复位 |
-| BL (背光) | GPIO42 | LEDC PWM 控制 |
+| BL（背光） | GPIO42 | LEDC PWM 控制 |
 
 - 主机：SPI3_HOST
 - 时钟频率：80 MHz
-- SPI 模式：SPI_MODE2（CPOL=1, CPHA=1）
-- 像素格式：RGB565, 16-bit
+- SPI 模式：SPI_MODE2（CPOL=1, CPHA=0）
+- 像素格式：RGB565，16-bit
 - 显示分辨率：320×240
 - 方向控制：已交换 XY + 镜像 X
 
@@ -48,11 +51,11 @@
 | DOUT | GPIO45 | 数据输出（到 ES8311 DAC） |
 | DIN | GPIO12 | 数据输入（从 ES7210 ADC） |
 
-- 主机：I2S1（GPIO 矩阵映射，I2S0/I2S1 可选）
-- 采样率：16 kHz / 48 kHz 可配置
+- 主机：I2S0（GPIO 矩阵映射）
+- 采样率：8 kHz / 16 kHz / 22.05 kHz / 32 kHz / 44.1 kHz / 48 kHz 可配置（录音侧 ES7210 仅支持 16 kHz / 44.1 kHz / 48 kHz）
 - 位宽：16-bit
-- 通道数：2 (Stereo)
-- MCLK 倍频：384（16 kHz）/ 256（48 kHz）
+- 通道数：2（Stereo）
+- MCLK：由 I2S 主机输出，固定为采样率 × 256
 
 ### 音频器件连接
 
@@ -68,7 +71,7 @@
 | CMD | GPIO48 | 命令线 |
 | D0 | GPIO21 | 数据线 0 |
 
-- 模式：1-SD (1-bit)
+- 模式：1-SD（1-bit）
 - 内部上拉：启用（SDMMC_SLOT_FLAG_INTERNAL_PULLUP）
 - 默认挂载点：/sdcard
 
@@ -88,12 +91,13 @@
 | PCLK | GPIO7 |
 | VSYNC | GPIO3 |
 | HREF | GPIO46 |
-| SIOC (SCCB SCL) | GPIO2（与 I2C0_SCL 复用） |
-| SIOD (SCCB SDA) | GPIO1（与 I2C0_SDA 复用） |
+| SIOC（SCCB SCL） | GPIO2（与 I2C0_SCL 复用） |
+| SIOD（SCCB SDA） | GPIO1（与 I2C0_SDA 复用） |
 | PWDN | PCA9557.BIT2 |
 | RESET | NC |
 
-- 像素格式：RGB565（JPEG 由软件编码）
+- 传感器：GC0308（VGA 640×480，SCCB 0x21）/ GC2145（UXGA 1600×1200，SCCB 0x3C），由 esp32-camera 按 PID 自动识别
+- 像素格式：RGB565；拍照由软件编码为 BMP
 - XCLK 频率：24 MHz
 - 帧缓冲：2 个，存放于 PSRAM
 - 抓取模式：CAMERA_GRAB_WHEN_EMPTY
@@ -126,7 +130,7 @@
 
 ## 外设引脚与配置
 
-### 触摸 (FT6336)
+### 触摸（FT6336）
 
 - SDA：GPIO1（与 I2C0 共享）
 - SCL：GPIO2（与 I2C0 共享）
@@ -141,7 +145,7 @@
 - y_max = 320（H_RES，反转后）
 - swap_xy = 1, mirror_x = 1, mirror_y = 0
 
-### 姿态传感器 (QMI8658)
+### 姿态传感器（QMI8658）
 
 - SDA：GPIO1（与 I2C0 共享）
 - SCL：GPIO2（与 I2C0 共享）
@@ -150,14 +154,14 @@
 
 默认配置：
 
-- ACC：±4g, 250Hz 输出率
-- GYR：±512 dps, 250Hz 输出率
+- ACC：±4g，250 Hz 输出率
+- GYR：±512 dps，250 Hz 输出率
 
 ### 用户按键
 
 | 信号 | 引脚 | 说明 |
 |------|------|------|
-| BOOT 键 | GPIO0 | 下降沿中断，内部上拉；正常运行时为用户按键 |
+| BOOT 键 | GPIO0 | 任意边沿中断，内部上拉；正常运行时为用户按键 |
 | RESET 键 | EN | 系统复位 |
 
 ## Strapping 引脚
@@ -173,7 +177,7 @@ GPIO0、GPIO3、GPIO45、GPIO46 为 strapping 引脚。
 
 - GPIO3/45/46 同时复用为摄像头与音频信号，上电时为高阻或低电平
 
-## IO 扩展芯片 (PCA9557PW)
+## IO 扩展芯片（PCA9557PW）
 
 | PCA9557 输出位 | 功能 | 默认值 |
 |---------------|------|--------|
@@ -186,7 +190,7 @@ GPIO0、GPIO3、GPIO45、GPIO46 为 strapping 引脚。
 - 0x00：INPUT_PORT
 - 0x01：OUTPUT_PORT
 - 0x02：POLARITY_INVERSION_PORT
-- 0x03：CONFIGURATION_PORT（1=输入, 0=输出）
+- 0x03：CONFIGURATION_PORT（1=输入，0=输出）
 
 默认配置：BIT0/BIT1/BIT2 设为输出，其他保持输入 → CONFIGURATION_PORT = 0xF8
 
@@ -233,7 +237,7 @@ GPIO0、GPIO3、GPIO45、GPIO46 为 strapping 引脚。
 | 47 | SD_CLK |
 | 48 | SD_CMD |
 
-## 外扩接口 (GH1.25)
+## 外扩接口（GH1.25）
 
 - 接口数：2 路
 - 端子规格：GH1.25 5P
@@ -250,40 +254,70 @@ GPIO0、GPIO3、GPIO45、GPIO46 为 strapping 引脚。
 - SY8088AAC 双路输出，每路 1A：MCU 电路 3V3，音频电路 AU_3V3
 - 供电：Type-C
 
-## 关键 ESP-IDF 配置项 (sdkconfig)
+## 关键 ESP-IDF 配置项（sdkconfig.defaults）
+
+选项名与取值以 ESP-IDF v6.1 的 Kconfig 为准。脚本运行时通过 espressif/lua 组件引入（Lua 5.4），其配置项以该组件自带的 Kconfig 为准。
 
 ```ini
+# 目标与分区
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_BT_ENABLED=y
-CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# CPU 与缓存
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
-CONFIG_ESP_WIFI_RX_BA_WIN=6
+
+# FreeRTOS 运行时统计（性能监控）
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# PSRAM（内部 RAM 紧张：小分配优先 PSRAM，并预留内部 DMA 区）
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Wi-Fi（静态收发缓冲，省内部 RAM）
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+
+# FATFS（TF 卡非 ASCII 长文件名）
 CONFIG_FATFS_LFN_HEAP=y
-CONFIG_FATFS_VFS_FSTAT_BLKSIZE=4096
 CONFIG_FATFS_CODEPAGE_936=y
 CONFIG_FATFS_API_ENCODING_UTF_8=y
-CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
-CONFIG_OPENTHREAD_RX_ON_WHEN_IDLE=y
+
+# SPIFFS（内置 Flash 文件系统）
 CONFIG_SPIFFS_OBJ_NAME_LEN=128
+
+# LVGL
 CONFIG_LV_COLOR_16_SWAP=y
 CONFIG_LV_MEM_CUSTOM=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
-CONFIG_LV_FONT_FMT_TXT_LARGE=y
 CONFIG_LV_USE_PNG=y
 CONFIG_LV_USE_GIF=y
+CONFIG_LV_USE_BMP=y
+
+# 蓝牙 BLE（仅 4.2；控制器环境池保持默认，勿下调）
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+# CONFIG_BT_BLE_50_FEATURES_SUPPORTED is not set
+CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y
+CONFIG_BT_ACL_CONNECTIONS=2
+CONFIG_BT_CTRL_BLE_MAX_ACT=6
+
+# 摄像头（GC0308 / GC2145；SCCB 走新版 i2c_master + I2C1）
+CONFIG_GC0308_SUPPORT=y
+CONFIG_GC2145_SUPPORT=y
+CONFIG_SCCB_HARDWARE_I2C_DRIVER_NEW=y
+CONFIG_SCCB_HARDWARE_I2C_PORT1=y
 ```
 
 ## 分区表
@@ -292,10 +326,8 @@ CONFIG_LV_USE_GIF=y
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,  24k
 phy_init, data, phy,     0xf000,  4k
-factory,  app,  factory, ,        4M
-ota_0,    app,  ota_0,   ,        4M
-ota_1,    app,  ota_1,   ,        4M
-storage,  data, spiffs,  ,        3M
+factory,  app,  factory, ,        8M
+storage,  data, spiffs,  ,        7M
 ```
 
-合计：bootloader (32KB @ 0x0000) + partition table (12KB @ 0x8000) + 6 个分区 (24K + 4K + 4M + 4M + 4M + 3M ≈ 15M) ≈ 15.07MB，16MB Flash 余量约 1MB
+合计：bootloader（32KB @ 0x0000）+ partition table（12KB @ 0x8000）+ 4 个分区（24K + 4K + 8M + 7M ≈ 15M）≈ 15.07MB，16MB Flash 余量约 1MB
