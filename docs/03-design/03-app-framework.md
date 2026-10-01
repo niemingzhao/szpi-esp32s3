@@ -77,7 +77,7 @@ const fw_app_desc_t app_clock_desc = {
 };
 ```
 
-`on_back(ctx)` 为可选字段：返回 `true` 表示"返回"已在 App 内处理（例如回到上一级页面），`fw_app_mgr` 不再退出到上一级；返回 `false` 或未实现则退出到上一级（通常是桌面）。状态栏返回键与 BOOT 单击都走这条路径，App 不要自己做返回按钮。
+`on_back(ctx)` 为可选字段：返回 `true` 表示"返回"已在 App 内处理（例如回到上一级页面），`fw_app_mgr` 不再退出到上一级；返回 `false` 或未提供 `on_back` 则退出到上一级（通常是桌面）。状态栏返回键与 BOOT 单击都走这条路径，App 不要自己做返回按钮。
 
 ## 3. App 生命周期详解
 

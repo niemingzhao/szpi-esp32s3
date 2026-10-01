@@ -124,7 +124,8 @@ peripherals_init_all()       // Peripherals
     ├── periph_touch_init()         // 触摸（注册 LVGL input device）
     ├── periph_imu_init()           // IMU
     ├── periph_storage_init()       // TF 卡挂载
-    └── periph_button_init()        // BOOT 键
+    ├── periph_button_init()        // BOOT 键
+    └── periph_ext_init()           // 外扩接口
 
     │
     ▼
@@ -175,7 +176,7 @@ idf_component_register(
     INCLUDE_DIRS include
     REQUIRES peripherals nvs_flash esp_netif esp_wifi esp_event esp_http_client esp_http_server
              esp_timer freertos chmorgan__esp-libhelix-mp3 mbedtls esp_websocket_client
-             esp_hw_support heap esp_system console esp_app_format bt spi_flash mqtt
+             esp_hw_support heap esp_system esp_app_format bt spi_flash mqtt
     PRIV_REQUIRES drivers
 )
 ```
@@ -222,4 +223,4 @@ espressif/json                  # JSON（IDF v6 起为独立组件）
 
 各组件使用各自最新稳定版本。
 
-ST7789 / PCA9557 / FT6336 / QMI8658 / ES8311 / ES7210 的芯片级驱动在本仓库 `main/drivers/` 自实现，I2C 统一走新版 `driver/i2c_master`（经 `drv_i2c_*` 封装），不引入对应的第三方组件。ESP-IDF v6.1 已移除旧版 I2C 驱动，本项目的驱动本来就基于新版，无需迁移。
+ST7789 / PCA9557 / FT6336 / QMI8658 / ES8311 / ES7210 的芯片级驱动在本仓库 `main/drivers/` 自实现，I2C 统一走新版 `driver/i2c_master`（经 `drv_i2c_*` 封装），不引入对应的第三方组件。ESP-IDF v6.1 已移除旧版 I2C 驱动，本项目统一用新版 i2c_master。

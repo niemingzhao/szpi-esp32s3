@@ -2,7 +2,7 @@
 
 UI 系统基于 LVGL 9 + esp_lvgl_port 2.x，由 Framework 层统一封装。
 
-新增或修改界面前，先读第 12 节《UI 视觉规范》：尺寸、圆角、间距、配色令牌与交互都以那一节为准，保持与现有界面同一套观感。
+新增或修改界面前，先读第 12 节《UI 视觉规范》：尺寸、圆角、间距、配色令牌与交互按那一节执行，保持与现有界面同一套观感。
 
 ## 1. UI 系统架构
 
@@ -136,14 +136,14 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
 
 ## 5. 字体与图标资源
 
-### 5.1 字体来源
+### 5.1 字体
 
 - 英文 / 数字：LVGL 内置 Montserrat 14（正文）、20（中号）、24（大号）
-- 中文：Noto Sans SC（OFL 授权）栅格化的 **14 px（正文）** 与 **16 px（标题）** 子集，位于 `framework/assets/font_cn14.c`、`font_cn16.c`
+- 中文：Noto Sans SC 栅格化的 **14 px（正文）** 与 **16 px（标题）** 子集，位于 `main/framework/assets/font_cn14.c`、`font_cn16.c`
 - 子集只包含界面用字，由 `tools/gen_cn_font.py` 生成（LVGL 9 字体格式）；子集里没有的符号回退到 Montserrat 14
 - 所有字体统一经 `fw_asset_font_cn()` / `fw_asset_font_cn_large()` / `fw_asset_font_14()` / `fw_asset_font_20()` / `fw_asset_font_24()` 获取
 
-### 5.2 图标来源
+### 5.2 图标
 
 - 优先 LVGL 内置 symbol（`LV_SYMBOL_PLAY` / `LV_SYMBOL_PAUSE` 等）
 - 自定义图标：用 LVGLImage.py 从 PNG 生成 C 数组
@@ -157,7 +157,7 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
 桌面是"Home"这个特殊 App：
 
 ```c
-// apps/app_home/app_home.c
+// main/apps/app_home/app_home.c
 const fw_app_desc_t app_home_desc = {
     .name = "Home",
     .icon_64 = NULL,

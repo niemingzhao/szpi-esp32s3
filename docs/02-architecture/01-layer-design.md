@@ -31,7 +31,7 @@ Apps       ──→ Framework ──→ Services ──→ Peripherals ──�
 - `lvgl_port_lock/unlock` 可在 Peripherals / Services 中使用（LVGL display、触摸 input device）
 - `esp_timer` / `FreeRTOS` API 可在任何层使用
 - 第三方组件的纯函数可在 Services / Framework / Apps 中直接调用
-- `fw_input` 可直接注册 `periph_button` 回调获取 BOOT 键事件（按键事件尚未接入事件总线）
+- `fw_input` 可直接注册 `periph_button` 回调获取 BOOT 键事件（按键事件不经事件总线）
 - 脚本对硬件（GPIO / PWM / I2C / UART / ADC）的访问经 `svc_io`，不直接调用 Peripherals
 
 ## 2. 静态库组织
@@ -114,10 +114,10 @@ esp_err_t bsp_init(esp_lcd_panel_handle_t *panel,
 ```c
 esp_err_t periph_lcd_init(void);
 esp_err_t periph_lcd_set_brightness(uint8_t percent);
-lv_disp_t *periph_lcd_get_disp(void);   /* 唯一向 framework 暴露的 LVGL 对象 */
+lv_display_t *periph_lcd_get_disp(void);   /* 唯一向 framework 暴露的 LVGL 对象 */
 
 esp_err_t periph_ext_gpio_write(uint8_t gpio, uint8_t level);
-esp_err_t periph_ext_adc_read(uint8_t channel, int *out_mv);
+esp_err_t periph_ext_adc_read(uint8_t gpio, int *out_mv);
 ```
 
 **约束**：
@@ -137,7 +137,7 @@ esp_err_t svc_audio_set_volume(uint8_t percent);
 esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 
 esp_err_t svc_io_gpio_write(uint8_t gpio, uint8_t level);
-esp_err_t svc_io_pwm_set(uint8_t channel, uint16_t freq_hz, uint8_t duty);
+esp_err_t svc_io_pwm_set(uint8_t gpio, uint32_t freq_hz, uint8_t duty_percent);
 ```
 
 **约束**：
@@ -153,7 +153,7 @@ esp_err_t svc_io_pwm_set(uint8_t channel, uint16_t freq_hz, uint8_t duty);
 ```c
 typedef struct {
     const char *name;
-    const lv_img_dsc_t *icon_64;
+    const lv_image_dsc_t *icon_64;
     const char *symbol;
     void *(*on_create)(void);
     void  (*on_start)(void *ctx);

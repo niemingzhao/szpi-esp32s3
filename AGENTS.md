@@ -3,7 +3,7 @@
 ## 一、语言与开发约定
 
 - **语言约定**：本项目所有文档（`README.md`、`AGENTS.md`、`docs/`、代码注释）默认使用简体中文，与 `docs/` 现有内容保持一致。
-- **文本与术语约定**：更新任一层文档或代码注释时，逐篇核对以下写法（最终以 `00-original-requirement.md`、`01-hardware-spec.md` 为准）：
+- **文本与术语约定**：更新任一层文档或代码注释时，逐篇核对以下写法（`00-original-requirement.md`、`01-hardware-spec.md` 已冻结，是这些写法的基准）：
   - `I2C`（不写 `I²C`）、`I2S`、`SPI`
   - `Wi-Fi`（不写 `WiFi`）
   - `SPIFFS`（不写 `LittleFS`）
@@ -11,7 +11,7 @@
   - 中文叙述用 `App`（`apps/`、`app_<name>` 等英文标识除外）；脚本统一叫「脚本」
   - 数字与单位之间加空格：`16 kHz`、`100 ms`、`30 FPS`
   - 不使用 emoji，不使用 `>` 引用块
-  - 组件 / 头文件名以 ESP-IDF 实际为准（如 `bt`、`mqtt`、`vfs`、`json`，不写 `esp_bt`/`esp_mqtt`/`esp_vfs`/`cJSON`）
+  - 组件 / 头文件名用 ESP-IDF 的实际名字（如 `bt`、`mqtt`、`vfs`、`json`，不写 `esp_bt`/`esp_mqtt`/`esp_vfs`/`cJSON`）
   - 涉及硬件参数时与 `01-hardware-spec.md` 核对（触摸为单点等）
 - **开发约定**：AI 助手**只负责编写代码、编写文档、操作文件**。以下操作**严禁 AI 自行执行**，必须由人类开发者完成：
   - 构建项目（`idf.py build` / `idf.py set-target` 等）
@@ -92,14 +92,14 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 - **返回值**：所有公开 API 返回 `esp_err_t`。
 - **日志**：禁用 `printf`，统一用 `ESP_LOGI/W/E`，TAG 带层前缀（`"drv.st7789"`、`"periph.lcd"`、`"svc.audio"`、`"fw.script"`、`"app.clock"`）。
 - **单向调用**：Peripherals 不能调 Services，Apps / 脚本不能调 Peripherals/Drivers，Services 不能调 Framework/Apps。
-- **例外**：Peripherals / Services / Framework 中可以使用 `lvgl_port_lock/unlock`；`fw_input` 可直接注册 `periph_button` 回调（按键事件尚未接入事件总线）；脚本对硬件的访问一律经 `svc_io`。
+- **例外**：Peripherals / Services / Framework 中可以使用 `lvgl_port_lock/unlock`；`fw_input` 可直接注册 `periph_button` 回调（按键事件不经事件总线）；脚本对硬件的访问一律经 `svc_io`。
 - **任务模型**：每个 Service 通常独占一个 FreeRTOS 任务；同步 API 只用于简单 setter。
 
 ---
 
 ## 四、AI 易踩的坑（按出错的代价排序）
 
-界面尺寸、圆角、间距、配色与交互统一以 `docs/03-design/02-ui-system.md` 第 12 节《UI 视觉规范》为准；新增或改动界面照现有规格做，不要另起一套风格。
+界面尺寸、圆角、间距、配色与交互按 `docs/03-design/02-ui-system.md` 第 12 节《UI 视觉规范》执行；新增或改动界面照现有规格做，不要另起一套风格。
 
 ### 4.1 LVGL 调用必须加锁
 
@@ -120,7 +120,7 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 - **RGB565 字节交换**：LVGL 9 不再有 `LV_COLOR_16_SWAP`，在显示 flush 回调里做（`LV_COLOR_FORMAT_RGB565_SWAPPED` 或 `lv_draw_sw_rgb565_swap()`）。
 - **内存分配**：用 `LV_USE_STDLIB_MALLOC = LV_STDLIB_CLIB`（走 IDF 堆，受 `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 影响），不要再用 `LV_MEM_CUSTOM`。
 - **图片解码**：PNG 是 `LV_USE_LODEPNG`、JPEG 是 `LV_USE_TJPGD`（旧版叫 `LV_USE_PNG`）。
-- 上述选项在 ESP-IDF 下经 lvgl 组件的 Kconfig 配置，选项名以组件为准。
+- 上述选项在 ESP-IDF 下经 lvgl 组件的 Kconfig 配置。
 
 ### 4.4 硬件细节：PCA9557 控制的不只是 IO
 
@@ -133,7 +133,7 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 | 触摸 INT | **NC**（轮询模式） |
 | 触摸 RST | **NC** |
 
-完整引脚 / I2C 表以 `docs/01-requirements/01-hardware-spec.md` 为准。
+完整引脚 / I2C 表见 `docs/01-requirements/01-hardware-spec.md`。
 
 - 触摸为单点（FT6336），只支持点击 / 长按，不支持多指与滑动手势。
 - GPIO33~37 被八线 PSRAM 占用，不可用；GPIO26~32 为模组内 Flash/PSRAM，未引出。
@@ -162,7 +162,7 @@ BLE 还有**内存余量**要求：控制器初始化要一块 30 KB 连续内�
 
 `svc_bt_init()` 在控制器初始化前调用 `esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT)` 把经典蓝牙的内存还给堆；`esp_bluedroid_init/enable` 声明在 `esp_bt_main.h`（不是 `esp_bluedroid_api.h`）。
 
-BLE HID 设备模拟（PRD `NET-009`）也在 `svc_bt` 内：协议本体移植自官方例程 `ble_hid_device_demo`，文件为 `svc_bt_hid_dev.c/h`（GATT 服务本体与属性表）、`svc_bt_hid_send.c/h`（报告发送）、`svc_bt_hid_report.c/h`（报告构造与用法值），符号统一 `svc_bt_hid_*` / `SVC_BT_HID_*`，TAG 统一 `svc.bt.hid`。**Bluedroid 只允许一个 GATTS 回调**（GAP 同理），所以回调统一由 `svc_bt` 注册，事件再按 app_id / gatts_if 转发给 HID；将来新增 GATT 服务必须走这条"一个回调 + 分发"的路，否则后注册的会覆盖先注册的。HID 报告要等配对（加密）完成才能发。
+BLE HID 设备模拟（PRD `NET-009`）也在 `svc_bt` 内：`svc_bt_hid_dev.c/h`（GATT 服务本体与属性表）、`svc_bt_hid_send.c/h`（报告发送）、`svc_bt_hid_report.c/h`（报告构造与用法值），符号统一 `svc_bt_hid_*` / `SVC_BT_HID_*`，TAG 统一 `svc.bt.hid`。**Bluedroid 只允许一个 GATTS 回调**（GAP 同理），所以回调统一由 `svc_bt` 注册，事件再按 app_id / gatts_if 转发给 HID；将来新增 GATT 服务必须走这条"一个回调 + 分发"的路，否则后注册的会覆盖先注册的。HID 报告要等配对（加密）完成才能发。
 
 两个**初始化时序 / 参数**坑（都曾表现为"状态停在 `state -> 1`、手机搜不到设备"）：
 
@@ -179,7 +179,7 @@ BLE HID 设备模拟（PRD `NET-009`）也在 `svc_bt` 内：协议本体移植�
 
 ### 4.8 中文界面文案与字体子集
 
-中文由 `main/framework/assets/font_cn14.c` / `font_cn16.c` 渲染（Noto Sans SC 栅格化，OFL 授权），是**只含界面用字的子集**。新增中文文案若出现方框，说明用到了字表外的字 —— 把该字加进 `tools/cn_chars.py` 的 `CN_CHARS` 并重新生成（源字体在 `tools/fonts/NotoSansSC-VF.ttf`，路径可省略）：
+中文由 `main/framework/assets/font_cn14.c` / `font_cn16.c` 渲染（Noto Sans SC 栅格化），是**只含界面用字的子集**。新增中文文案若出现方框，说明用到了字表外的字 —— 把该字加进 `tools/cn_chars.py` 的 `CN_CHARS` 并重新生成（源字体在 `tools/fonts/NotoSansSC-VF.ttf`，路径可省略）：
 
 ```powershell
 python tools/gen_cn_font.py --sizes 14,16
@@ -187,7 +187,7 @@ python tools/gen_cn_font.py --sizes 14,16
 
 字体统一从 `fw_asset_font_cn()`（14 px 正文）/ `fw_asset_font_cn_large()`（16 px 标题）/ `fw_asset_font_14|20|24()`（拉丁）获取，不要直接引用字体变量。开机画面用 `main/framework/assets/image_lckfb_logo.c`。
 
-**字体生成要按 LVGL 9 的字体格式**（`tools/gen_cn_font.py` 里已切到 LVGL 9 输出）。
+**字体生成按 LVGL 9 的字体格式**。
 
 动态数据（如 Wi-Fi 名称、文件名）里的汉字不在字表内是正常的 —— UI 字体回退到 `font_cn_extra`（`--cs gb2312` 生成，GB2312 一级 3755 常用字，14 px / 2bpp），两条生成命令：
 
@@ -258,7 +258,7 @@ idf.py build
 
 Task WDT 由 IDF 启动时初始化（`CONFIG_ESP_TASK_WDT_TIMEOUT_S=5`，默认**只告警不重启**）。`svc_watchdog_init()` 在 Services 初始化时把它配成"只告警"，`main.c` 在**内置 Flash 挂载（首次 SPIFFS 格式化）之后**才调 `svc_watchdog_arm()` 打开"喂狗超时自动重启"（PRD `SYS-003`）。不要把这个调用提前：格式化 7 MB 存储分区期间任务长时间不喂狗，提前打开会重启 → 格式化永远做不完 → 启动循环。
 
-纳入监控的任务必须在自己的循环里 `svc_watchdog_subscribe()`（幂等）+ `svc_watchdog_feed()`，且循环周期远小于超时。当前纳入：事件总线派发任务、`svc_power`、`svc_imu`。**长时间阻塞在队列上的任务不要直接纳入**：`svc_audio`、`ntp_sync_task` 尚未纳入，要先改成"有限等待 + 喂狗"才安全。
+纳入监控的任务必须在自己的循环里 `svc_watchdog_subscribe()`（幂等）+ `svc_watchdog_feed()`，且循环周期远小于超时。当前纳入：事件总线派发任务、`svc_power`、`svc_imu`。**长时间阻塞在队列上的任务不要直接纳入**：`svc_audio`、`ntp_sync_task` 先改成"有限等待 + 喂狗"才安全。
 
 ### 4.17 崩溃记录：RTC 暂存 + wrap panic handler
 
@@ -292,7 +292,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 
 内部 SRAM 只有约 190 KB 可用堆，而下面这些**只能用内部 RAM**的消费者加起来已经把大部分吃掉了：Wi-Fi（静态收发缓冲 + WPA 派生）、BLE（控制器环境池 + 主机任务/队列）、音频 I2S DMA、LVGL 绘制缓冲（6.4 KB，见 4.2）、各服务任务与队列、`CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL` 预留的一块。
 
-实测踩过的坑：在 Wi-Fi 关联 + SPIFFS 挂载那个时间窗里连小对象都分配不出来（`E SPIFFS: mutex lock could not be created` 后 `assert vQueueDelete`，或 `abort() at lock_init_generic`），本质是内部堆空了。
+在 Wi-Fi 关联 + SPIFFS 挂载那个时间窗里，连小对象都可能分配不出来（`E SPIFFS: mutex lock could not be created` 后 `assert vQueueDelete`，或 `abort() at lock_init_generic`），本质是内部堆空了。
 
 对策（都在 `sdkconfig.defaults`）：
 
@@ -307,8 +307,6 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 - `main.c` 挂载内置 SPIFFS 前：`heap before internal mount: dma-internal free=... largest=...`
 - `svc_bt_init()` 开始 / 结束：`init: dma-internal heap free=...` / `init done: ...`
 - 串口工具 / 性能监控 App：当前堆余量
-
-**已知待办**：`periph.audio` 的麦克风自检一直读到满量程（`peak 32767/32767`），说明 I2S RX 没拿到真实数据（ES7210 的 I2C 配置是通的，怀疑串口格式 / 增益 / 通道映射）。录音 App 能录出带 WAV 头的文件，但音质要等这个修好才算通过验收。
 
 ### 4.21 新增 App 用到的公共设施（不要各写一套）
 
@@ -337,7 +335,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 - 同一时刻只运行一个前台脚本；脚本退出 / 异常时由 `fw_script` 统一回收它创建的界面对象、定时器、订阅。
 - 脚本执行在 `script_task`（优先级 4，核心 0），不要在脚本绑定里做长阻塞操作。
 - 脚本异常不得影响系统：错误（行号 + 描述）写日志并提示，不允许把异常抛到 C 层。
-- 脚本绑定接口（Lua 侧命名）以 `docs/03-design/03-app-framework.md` 为准，改动时同步该文档。
+- 脚本绑定接口（Lua 侧命名）见 `docs/03-design/03-app-framework.md`，改动时同步该文档。
 
 ### 4.23 往日志里挂钩子必须做重入保护
 
@@ -345,7 +343,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 
 做法（见 `svc_sysinfo.c`）：用"当前任务是否已在本函数里"判断重入（`xTaskGetCurrentTaskHandle()` 与保存的 owner 比对，重入直接 `return 0`），行缓冲放**静态区**而不是调用者栈上，并且**剩余栈不足时不抄录**（`uxTaskGetStackHighWaterMark(NULL) < 512` 就跳过）—— `vsnprintf` 的栈开销算在调用者头上，BTC_TASK（3072 B，被 Bluedroid 日志吃到临界）实测会被压爆栈。
 
-界面侧配套的坑：**不要在定时刷新的页面上放超大自动换行标签**。曾经每 2 s 刷新一个 1.2 KB 的 `LV_LABEL_LONG_WRAP` 标签并 `lv_obj_scroll_to_view()`，LVGL 任务会长时间卡在字体布局与 glyph 查询上，把同核的 `svc_imu` 饿死 → 看门狗 abort。现在只显示最近 512 B、刷新间隔 3 s、不再自动滚动。
+界面侧配套的坑：**不要在定时刷新的页面上放超大自动换行标签**：超大的 `LV_LABEL_LONG_WRAP` 标签会让 LVGL 任务长时间卡在字体布局与 glyph 查询上，把同核的 `svc_imu` 饿死 → 看门狗 abort。这类页面只显示最近 512 B、刷新间隔 3 s、不自动滚动。
 
 ---
 
@@ -456,14 +454,14 @@ App / 脚本 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC
 
 ---
 
-## 九、真相来源优先级（与文档冲突时）
+## 九、代码与文档的优先级（冲突时）
 
 1. `main/main.c` + `sdkconfig` + `partitions.csv` + `dependencies.lock`（真正会参与构建的）
 2. `docs/02-architecture/*.md`（目标架构）
 3. `docs/01-requirements/*.md`（意图）
 4. `docs/03-design/*.md`（详细设计）
 
-(1) 与 (2) 冲突时，以 (1) 为准并更新 (2)。注意 `00-original-requirement.md` / `01-hardware-spec.md` 已冻结（见 1.1），不能靠改它们来消解冲突。
+(1) 与 (2) 冲突时，按 (1) 修正 (2)。注意 `00-original-requirement.md` / `01-hardware-spec.md` 已冻结（见 1.1），不能靠改它们来消解冲突。
 
 ---
 

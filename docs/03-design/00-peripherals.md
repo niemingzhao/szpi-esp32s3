@@ -355,7 +355,7 @@ esp_err_t periph_ext_uart_read(uint8_t *data, size_t len, size_t *read_len, uint
 - I2C 直接复用 `drv_i2c_bus_handle()`（临时挂载 / 摘除设备）
 - UART 用 `driver/uart` 的独立端口（不复用 UART0，UART0 留给下载与日志）
 - GPIO10 / GPIO11 同一时刻只能用于一种复用（UART 与 PWM 互斥）
-- CAN 未实现（外扩接口硬件支持，软件不做）
+- 本层只做 GPIO / PWM / I2C / UART / ADC，不做 CAN
 
 ## 12. Peripherals 初始化顺序
 

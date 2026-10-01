@@ -188,7 +188,7 @@
 
 **包含**：
 - `main.c` - `app_main()`
-- `apps/src/app_register.c` - 所有内置 App 的注册表
+- `main/apps/src/app_register.c` - 所有内置 App 的注册表
 
 ## 4. 关键技术选型
 
@@ -259,8 +259,9 @@ App / 脚本 调用 svc_settings_set(key, value)
 | `touch_scan_task` | 4 | 0 | 触摸扫描、点击 / 长按识别 |
 | `key_task` | 4 | 0 | BOOT 按键 |
 | `imu_task` | 3 | 0 | 周期性读取 IMU |
-| `audio_play_task` | 6 | 1 | 音频解码 + 写入 I2S |
-| `audio_feed_task` | 6 | 1 | 麦克风采集 |
+| `play_task` | 6 | 1 | 音频解码 + 写入 I2S |
+| `rec_task` | 5 | 1 | 麦克风采集 |
+| `tone_task` | 4 | 1 | 提示音 |
 | `net_event_task` | 4 | 0 | Wi-Fi 事件处理 |
 | `ntp_sync_task` | 2 | 0 | SNTP 周期同步 |
 | `power_task` | 2 | 0 | 背光超时、熄屏 |
@@ -275,7 +276,7 @@ App / 脚本 调用 svc_settings_set(key, value)
 ```
 1. nvs_flash_init()
 2. bsp_init()                // I2C / LEDC / PCA9557 / ST7789 / FT6336 / BOOT 键 / QMI8658
-3. peripherals_init_all()    // IO / Audio / LCD(+LVGL) / Touch / IMU / Storage / Button
+3. peripherals_init_all()    // IO / Audio / LCD(+LVGL) / Touch / IMU / Storage / Button / Ext
 4. services_init()           // Watchdog → EventBus → Settings → Storage → BT → Time →
                              //   Audio → Net → Power → IMU → IO → Camera → SysInfo
 5. fw_init()                 // Theme / Asset / Window / AppMgr / Script / UI / StatusBar / Input
@@ -292,11 +293,11 @@ App / 脚本 调用 svc_settings_set(key, value)
 
 | 区域 | 大小 | 用途 |
 |------|------|------|
-| 内置 SRAM | 512 KB | FreeRTOS 任务栈、LVGL 控制块、帧缓冲、关键 buffer |
+| 内置 SRAM | 512 KB | FreeRTOS 任务栈、LVGL 控制块、绘制缓冲、关键 buffer |
 | PSRAM | 8 MB | 字体 / 图片 / 音频 / 摄像头缓冲、大块动态数据 |
 
 **关键原则**：
-- LVGL 帧缓冲放内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
+- LVGL 绘制缓冲放内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
 - 非关键 buffer 优先 PSRAM
 - 关键实时路径（音频解码、触摸）放内置 SRAM
 
@@ -316,7 +317,7 @@ storage,  data, spiffs,  ,        7M
 
 ## 9. 关键配置项（sdkconfig.defaults）
 
-选项名与取值以 ESP-IDF v6.1 的 Kconfig 为准。LVGL 用 9.x（选项名与 v8 不同），脚本运行时用 espressif/lua 组件（Lua 5.4）；两者配置项均以组件自带的 Kconfig 为准。
+LVGL 用 9.x，脚本运行时用 `espressif/lua` 组件（Lua 5.4）。
 
 ```ini
 # 目标与分区
@@ -355,7 +356,7 @@ CONFIG_FATFS_API_ENCODING_UTF_8=y
 # SPIFFS（内置 Flash 文件系统）
 CONFIG_SPIFFS_OBJ_NAME_LEN=128
 
-# LVGL 9（选项名以 lvgl 组件的 Kconfig 为准，此处给出等价的 lv_conf 宏）
+# LVGL 9 配置（lv_conf 宏）
 #   LV_COLOR_DEPTH        16
 #   LV_USE_STDLIB_MALLOC  LV_STDLIB_CLIB（走 IDF 堆，受 PSRAM 分配策略约束）
 #   LV_FONT_MONTSERRAT_20 / 24 / 32   1
