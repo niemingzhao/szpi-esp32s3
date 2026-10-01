@@ -64,7 +64,7 @@
 **约束**：
 - 不调用其他任何 SZPI-OS 层
 - 只依赖 ESP-IDF / FreeRTOS / 第三方组件
-- 不创建 FreeRTOS 任务（ISR 注册除外）
+- 不创建 FreeRTOS 任务（例外：`drv_key` 的去抖任务 `key_task`；其余驱动只注册 ISR）
 
 ### 3.2 Peripherals 层
 
@@ -167,9 +167,9 @@
 
 ### 3.6 脚本子系统
 
-系统在原生 App 之外提供第二套应用模型：脚本用 Lua 5.4 编写，存放在 TF 卡脚本目录，由脚本管理器选择运行。运行时、管理与绑定都在 `fw_script`。
+系统在原生 App 之外提供第二套应用模型：脚本用 Lua 5.5 编写，存放在 TF 卡脚本目录，由脚本管理器选择运行。运行时、管理与绑定都在 `fw_script`。
 
-**运行时**：Lua 5.4，提供加载 / 执行 / 停止接口与错误处理。
+**运行时**：Lua 5.5，提供加载 / 执行 / 停止接口与错误处理。
 
 **脚本管理**：扫描脚本目录、读取元信息、释放内置示例脚本、下载网络脚本。
 
@@ -177,6 +177,8 @@
 - 界面 / 输入 / 通知 - 调用 Framework 自身（`fw_ui` / `fw_input`）
 - 音频 / 摄像头 / 文件 / 网络 / BLE / 时间 / 系统信息 / 事件 - 调用 Services
 - GPIO / PWM / I2C / UART / ADC - 调用 `svc_io`
+
+**权限与沙箱**：脚本头部用 `-- @perm io,file,net` 声明要用的能力模块；不写声明表示全部可用，写了声明就只注册列出的模块。
 
 **生命周期**：同一时刻只运行一个前台脚本；脚本退出或异常时释放资源，不影响系统。
 
@@ -197,7 +199,7 @@
 | 操作系统 | FreeRTOS | ESP-IDF 内置 |
 | GUI | LVGL 9 | 嵌入式 GUI |
 | LVGL 适配 | esp_lvgl_port 2.x | 显示与线程安全 |
-| 脚本 | Lua 5.4（espressif/lua） | 用户脚本运行时 |
+| 脚本 | Lua 5.5（espressif/lua） | 用户脚本运行时 |
 | 文件系统 | FAT32（TF 卡）+ SPIFFS（内置 Flash） | 双文件系统 |
 | 持久化 | NVS | 系统配置、Wi-Fi 凭据 |
 | 音频解码 | helix MP3 | MP3 解码 |
@@ -259,17 +261,14 @@ App / 脚本 调用 svc_settings_set(key, value)
 | `touch_scan_task` | 4 | 0 | 触摸扫描、点击 / 长按识别 |
 | `key_task` | 4 | 0 | BOOT 按键 |
 | `imu_task` | 3 | 0 | 周期性读取 IMU |
-| `play_task` | 6 | 1 | 音频解码 + 写入 I2S |
-| `rec_task` | 5 | 1 | 麦克风采集 |
-| `tone_task` | 4 | 1 | 提示音 |
-| `net_event_task` | 4 | 0 | Wi-Fi 事件处理 |
+| `svc_audio` | 6 | 1 | 音频解码 / 录音 + I2S 读写 |
 | `ntp_sync_task` | 2 | 0 | SNTP 周期同步 |
 | `power_task` | 2 | 0 | 背光超时、熄屏 |
 | `sd_monitor_task` | 3 | 0 | TF 卡热插拔监测 |
 | `script_task` | 4 | 0 | 脚本执行 |
 | `event_bus_task` | 4 | 0 | 事件分发 |
 
-任务间通信：LVGL 操作经 `lvgl_port_lock/unlock`；跨任务用 FreeRTOS 队列或事件组；全局状态用互斥锁保护。
+任务间通信：LVGL 操作经 `lvgl_port_lock/unlock`；跨任务用 FreeRTOS 队列或事件组；全局状态用互斥锁保护。Wi-Fi / IP 事件由 ESP-IDF 的 `esp_event` 默认事件循环任务处理，`svc_net` 的 HTTP 请求按需创建临时任务 `svc.http`（优先级 5），`app_wifi` 扫描时按需创建临时任务 `wifi_scan`（优先级 4）。
 
 ## 7. 启动序列
 
@@ -317,7 +316,7 @@ storage,  data, spiffs,  ,        7M
 
 ## 9. 关键配置项（sdkconfig.defaults）
 
-LVGL 用 9.x，脚本运行时用 `espressif/lua` 组件（Lua 5.4）。
+LVGL 用 9.x，脚本运行时用 `espressif/lua` 组件（Lua 5.5）。
 
 ```ini
 # 目标与分区

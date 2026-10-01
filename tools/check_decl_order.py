@@ -16,7 +16,7 @@ import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-LAYERS = ('drivers', 'peripherals', 'services', 'framework', 'apps', 'main')
+LAYERS = ('main',)
 SKIP_DIRS = ('managed_components', 'build', '.git', 'tools', 'docs')
 
 FUNC_DEF = re.compile(r'(?m)^static\s+[A-Za-z_][\w \*]*?\s+([a-z_][a-z0-9_]*)\s*\([^;]*\)\s*$')

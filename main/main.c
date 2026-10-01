@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * SZPI-OS v0.5 - Services Layer (net + audio)
+ * SZPI-OS 启动入口
  *
  * 启动序列：
  *   NVS → bsp_init()（Drivers）→ peripherals_init_all()（含 LVGL display/touch）

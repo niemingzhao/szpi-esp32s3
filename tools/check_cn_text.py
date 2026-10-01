@@ -16,7 +16,7 @@ from cn_chars import CN_CHARS
 covered = set(CN_CHARS) | set(chr(c) for c in range(0x20, 0x7F))
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGETS = ['apps', 'framework/src', 'framework/include', 'main', 'services/src', 'peripherals/src', 'drivers/src']
+TARGETS = ['main']
 
 CJK = re.compile(r'[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]')
 

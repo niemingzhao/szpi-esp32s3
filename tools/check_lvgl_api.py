@@ -44,20 +44,17 @@ def collect_lvgl_identifiers():
 
 
 def iter_sources():
-    for layer in ('apps', 'framework', 'peripherals', 'drivers', 'services', 'main'):
-        base = os.path.join(ROOT, layer)
-        for root, dirs, files in os.walk(base):
-            dirs[:] = [d for d in dirs if d not in ('build', '.git')]
-            for name in sorted(files):
-                if name.endswith('.c'):
-                    yield os.path.join(root, name)
+    for root, dirs, files in os.walk(os.path.join(ROOT, 'main')):
+        dirs[:] = [d for d in dirs if d not in ('build', '.git')]
+        for name in sorted(files):
+            if name.endswith('.c'):
+                yield os.path.join(root, name)
 
 
 def collect_project_defines():
     """项目自己 #define 的 LV_* / lv_* 名字（例如图片资源里的 LV_ATTRIBUTE_IMG_xxx）也算存在"""
     defined = set()
-    for layer in ('apps', 'framework', 'peripherals', 'drivers', 'services', 'main',
-                  'managed_components'):
+    for layer in ('main', 'managed_components'):
         base = os.path.join(ROOT, layer)
         if not os.path.isdir(base):
             continue

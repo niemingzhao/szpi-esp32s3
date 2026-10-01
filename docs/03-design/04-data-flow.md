@@ -26,7 +26,7 @@
         │
         ├─→ app_register_all()      // 注册所有内置 App
         │
-        ├─→ fw_boot_animation()     // Logo + 提示音（约 1.35 s）
+        ├─→ fw_boot_animation()     // Logo + 提示音（约 2.05 s）
         │
         ├─→ fw_app_mgr_launch("Home")
         │     │
@@ -39,15 +39,19 @@
 
 ### 1.1 时间预算
 
-| 阶段 | 目标时间 |
-|------|----------|
-| `bsp_init` | < 200 ms |
-| `peripherals_init_all` | < 500 ms |
-| `services_init` | < 150 ms（含蓝牙初始化） |
-| `fw_init` | < 100 ms |
-| `app_register_all` | < 10 ms |
-| `fw_boot_animation` | 约 1350 ms |
-| **总计到首屏** | **< 2.5 s** |
+| 阶段 | 目标 | 实测 |
+|------|------|------|
+| ROM + bootloader + IDF 启动（含 PSRAM 自检约 300 ms） | 约 1.2 s | 1.20 s |
+| `bsp_init` | < 250 ms | 190 ms |
+| `peripherals_init_all`（含 TF 卡挂载） | < 400 ms | 280 ms |
+| `services_init`（含蓝牙约 150 ms、Wi-Fi 约 100 ms） | < 450 ms | 320 ms |
+| `fw_init` | < 150 ms | 100 ms |
+| `app_register_all`（23 个 App） | < 150 ms | 90 ms |
+| `fw_boot_animation`（Logo 静态展示 + 提示音） | 约 2.05 s | 2.14 s |
+| 创建并启动桌面 | < 150 ms | 90 ms |
+| **总计到桌面（从供电起算）** | **< 5 s** | **约 4.4 s** |
+
+内置 SPIFFS 在桌面显示之后才挂载（不做 OTA 的 7 MB 分区整块挂载实测约 0.8 s），不计入上表。
 
 ## 2. 触摸点击进入 App
 
@@ -236,7 +240,7 @@
 
 | 场景 | 目标 |
 |------|------|
-| 开机到首屏 | < 2.5 s |
+| 开机到桌面 | < 5 s |
 | App 切换 | < 500 ms |
 | 脚本启动 | < 500 ms |
 | 触摸响应 | < 100 ms |

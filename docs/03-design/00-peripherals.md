@@ -38,7 +38,7 @@ lv_display_t *periph_lcd_get_disp(void);
 uint16_t periph_lcd_get_width(void);
 uint16_t periph_lcd_get_height(void);
 
-/** 亮度控制 (0-100, 自动持久化) */
+/** 亮度控制 (0-100) */
 esp_err_t periph_lcd_set_brightness(uint8_t percent);
 uint8_t periph_lcd_get_brightness(void);
 
@@ -56,7 +56,7 @@ esp_err_t periph_lcd_draw_bitmap(int x1, int y1, int x2, int y2, const uint16_t 
 
 - LCD 面板、背光 PWM、IO 扩展的**硬件初始化由 Drivers 层 `bsp_init()` 完成**
 - `periph_lcd_init()` 取 `drv_st7789` 的 panel / io handle，调用 `lvgl_port_init()` 并注册 LVGL 显示（esp_lvgl_port 2.x，LVGL 9）
-- 亮度持久化到 NVS namespace `sys`，key `brightness`，默认 80
+- 亮度由 `svc_power` 持久化（NVS `sys/lcd_bright`，默认 80）后再调本模块；本模块只写 PWM
 - `periph_lcd_get_disp()` 返回 `lv_display_t`，供 Touch / Framework 使用
 - RGB565 字节交换在显示 flush 回调里处理（LVGL 9 已移除 `LV_COLOR_16_SWAP`）
 - flush 回调带错误处理：刷屏失败时补一次 `lv_display_flush_ready()`，避免单缓冲下 LVGL 死等
@@ -103,7 +103,7 @@ esp_err_t periph_touch_register_callback(periph_touch_cb_t cb, void *user);
 
 ### 4.2 内部实现要点
 
-- 调用 `drv_ft6336_init()` 初始化触摸 IC
+- 触摸 IC 由 `bsp_init()` 里的 `drv_ft6336_init()` 初始化；本模块调 `drv_ft6336_get_touch_handle()` 取句柄
 - `periph_touch` 是触摸设备的**唯一轮询者**：创建 `touch_scan_task`（优先级 4，核心 0，10 ms 周期）读取坐标并缓存
 - 注册一个 LVGL POINTER input device，其 read_cb 只读取缓存，不访问硬件（避免并发读取丢点）
 - 触摸回调在 `touch_scan_task` 上下文执行，**不可阻塞**
@@ -160,7 +160,7 @@ esp_err_t periph_audio_read(uint8_t *data, size_t len, size_t *bytes_read, uint3
 - I2S0：MCLK = 采样率 × 256，16-bit 立体声；发送用标准模式，接收用 TDM
 - 采样率：播放支持 8 / 16 / 22.05 / 32 / 44.1 / 48 kHz；录音（ES7210）限 16 / 44.1 / 48 kHz
 - 音量映射：0-100 → ES8311 寄存器（线性）
-- 默认：播放 48 kHz、录音 16 kHz，16-bit 立体声
+- 默认 16 kHz（播放与录音共用同一条 I2S 时钟），16-bit 立体声
 
 ## 6. periph_imu
 
@@ -213,6 +213,9 @@ bool periph_storage_is_mounted(periph_storage_type_t type);
 /** 查询存储信息 */
 esp_err_t periph_storage_get_info(periph_storage_type_t type, periph_storage_info_t *out);
 
+/** TF 卡是否插着（热插拔轮询在 svc_storage 的 sd_monitor_task） */
+bool periph_storage_tf_card_present(void);
+
 /** 通用文件操作（封装 POSIX API） */
 esp_err_t periph_storage_file_exists(periph_storage_type_t type, const char *path);
 esp_err_t periph_storage_file_size(periph_storage_type_t type, const char *path, size_t *size);
@@ -227,7 +230,7 @@ esp_err_t periph_storage_format(periph_storage_type_t type);
 
 - TF 卡：`esp_vfs_fat_sdmmc_mount()` → `/sdcard`（SDMMC 1-bit，无卡时不报错）
 - 内置 Flash：`esp_vfs_spiffs_register()` → `/internal`（`storage` 分区，首次挂载失败时格式化；在首屏之后挂载以不阻塞启动）
-- 监控 TF 卡热插拔
+- 提供 `periph_storage_tf_card_present()`；热插拔轮询在 `svc_storage` 的 `sd_monitor_task`
 - 空间查询：`esp_vfs_fat_info()` / `esp_spiffs_info()`
 
 ## 8. periph_camera
@@ -265,7 +268,7 @@ esp_err_t periph_camera_release_frame(periph_camera_frame_t *frame);
 ### 8.2 内部实现要点
 
 - 调用 `drv_camera_init()`（esp32-camera，按 PID 自动识别 GC0308 / GC2145）
-- 上电 / 掉电经 `drv_pca9557` 控制 DVP_PWDN
+- 上电 / 掉电（DVP_PWDN，PCA9557.BIT2）由 `drv_camera` 内部控制
 - 帧缓冲放 PSRAM，2 帧
 - 默认 QVGA（320×240）RGB565，用于预览
 - 拍照由相机 App 把 RGB565 帧编码为 BMP 存 TF 卡
@@ -305,6 +308,7 @@ typedef enum {
     PERIPH_BTN_EVT_CLICK,
     PERIPH_BTN_EVT_DOUBLE_CLICK,
     PERIPH_BTN_EVT_LONG_PRESS,
+    PERIPH_BTN_EVT_VERY_LONG_PRESS,
 } periph_button_evt_t;
 
 typedef void (*periph_button_cb_t)(periph_button_evt_t evt, void *user);

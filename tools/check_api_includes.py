@@ -24,7 +24,7 @@ import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-LAYERS = ('drivers', 'peripherals', 'services', 'framework', 'apps', 'main')
+LAYERS = ('main',)
 SKIP_DIRS = ('managed_components', 'build', '.git', 'tools', 'docs')
 
 RET = (r'(?:esp_err_t|void|bool|int|char|unsigned|size_t|float|uint8_t|uint16_t|uint32_t'

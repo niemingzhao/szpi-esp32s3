@@ -92,7 +92,7 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 - **返回值**：所有公开 API 返回 `esp_err_t`。
 - **日志**：禁用 `printf`，统一用 `ESP_LOGI/W/E`，TAG 带层前缀（`"drv.st7789"`、`"periph.lcd"`、`"svc.audio"`、`"fw.script"`、`"app.clock"`）。
 - **单向调用**：Peripherals 不能调 Services，Apps / 脚本不能调 Peripherals/Drivers，Services 不能调 Framework/Apps。
-- **例外**：Peripherals / Services / Framework 中可以使用 `lvgl_port_lock/unlock`；`fw_input` 可直接注册 `periph_button` 回调（按键事件不经事件总线）；脚本对硬件的访问一律经 `svc_io`。
+- **例外**：Peripherals / Services / Framework 中可以使用 `lvgl_port_lock/unlock`；`fw_input` 可直接注册 `periph_button` 回调（同时把按键事件转发到 `SVC_EVENT_KEY` 供脚本订阅）；脚本对硬件的访问一律经 `svc_io`。
 - **任务模型**：每个 Service 通常独占一个 FreeRTOS 任务；同步 API 只用于简单 setter。
 
 ---
@@ -118,8 +118,11 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 本项目用 **LVGL 9**（`LV_COLOR_16_SWAP` 已移除、`lv_disp_*`→`lv_display_*`、`lv_img_*`→`lv_image_*`、`lv_btn_*`→`lv_button_*`、`LV_MEM_CUSTOM`→`LV_USE_STDLIB_MALLOC`）。几条常被踩的：
 
 - **RGB565 字节交换**：LVGL 9 不再有 `LV_COLOR_16_SWAP`，在显示 flush 回调里做（`LV_COLOR_FORMAT_RGB565_SWAPPED` 或 `lv_draw_sw_rgb565_swap()`）。
-- **内存分配**：用 `LV_USE_STDLIB_MALLOC = LV_STDLIB_CLIB`（走 IDF 堆，受 `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 影响），不要再用 `LV_MEM_CUSTOM`。
+- **内存分配**：`sdkconfig.defaults` 里设 `CONFIG_LV_USE_CLIB_MALLOC=y`（choice 里选中 CLIB，LVGL 的 `LV_USE_STDLIB_MALLOC` 随之等于 `LV_STDLIB_CLIB`，去走 IDF 堆，受 `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 影响）。注意 `CONFIG_LV_STDLIB_CLIB` 只是个 `int` 常量、**不是**开关，写成 `=y` 会被 Kconfig 静默忽略而回落到内置 TLSF 分配器。不要再用 `LV_MEM_CUSTOM`。
 - **图片解码**：PNG 是 `LV_USE_LODEPNG`、JPEG 是 `LV_USE_TJPGD`（旧版叫 `LV_USE_PNG`）。
+- **LVGL 9.6 废弃了通用 flag 接口**：`lv_obj_add_flag` / `lv_obj_clear_flag` / `lv_obj_remove_flag` / `lv_obj_has_flag` / `lv_obj_set_flag` 都改成专用 setter，如 `lv_obj_set_scrollable(o, false)`、`lv_obj_set_clickable(o, true)`、`lv_obj_set_hidden(o, true)`、`lv_obj_is_hidden(o)`。用户自定义 flag（`LV_OBJ_FLAG_USER_1`）没有专用 setter，改用 `lv_obj_set_user_data()` / `lv_obj_get_user_data()` 传标记（对象由 `lv_malloc_zeroed` 分配，`user_data` 初值必为 NULL）。`lv_timer_t` 已是不可见类型，读它的 data 要用 `lv_timer_get_user_data(t)`，不能写 `t->user_data`。
+- **Lua 的 `lualib.h` 预声明了标准库入口符号**（`luaopen_io` / `luaopen_os` / `luaopen_string` / `luaopen_math` 等）：`fw_script.c` 里脚本模块的 C 入口不能与它们同名，否则「static declaration follows non-static declaration」。我们的 `io` 模块入口因此叫 `luaopen_io_hw`。
+- **工具链实际是 GCC 15.2**（`esp-15.2.0_20251204`，`-std=gnu23`），4.18 那批降级清单在它上面依然适用。
 - 上述选项在 ESP-IDF 下经 lvgl 组件的 Kconfig 配置。
 
 ### 4.4 硬件细节：PCA9557 控制的不只是 IO
@@ -258,7 +261,7 @@ idf.py build
 
 Task WDT 由 IDF 启动时初始化（`CONFIG_ESP_TASK_WDT_TIMEOUT_S=5`，默认**只告警不重启**）。`svc_watchdog_init()` 在 Services 初始化时把它配成"只告警"，`main.c` 在**内置 Flash 挂载（首次 SPIFFS 格式化）之后**才调 `svc_watchdog_arm()` 打开"喂狗超时自动重启"（PRD `SYS-003`）。不要把这个调用提前：格式化 7 MB 存储分区期间任务长时间不喂狗，提前打开会重启 → 格式化永远做不完 → 启动循环。
 
-纳入监控的任务必须在自己的循环里 `svc_watchdog_subscribe()`（幂等）+ `svc_watchdog_feed()`，且循环周期远小于超时。当前纳入：事件总线派发任务、`svc_power`、`svc_imu`。**长时间阻塞在队列上的任务不要直接纳入**：`svc_audio`、`ntp_sync_task` 先改成"有限等待 + 喂狗"才安全。
+纳入监控的任务必须在自己的循环里 `svc_watchdog_subscribe()`（幂等）+ `svc_watchdog_feed()`，且循环周期远小于超时。当前纳入：事件总线派发任务、`svc_power`、`svc_imu`。`svc_watchdog_feed()` 在未纳入的任务里是安全空操作（内部先查 `esp_task_wdt_status`）—— 否则 `esp_task_wdt_reset()` 会每圈打一条 `task not found` 错误日志，20 ms 一圈的任务就能把串口刷爆。**长时间阻塞在队列上的任务不要直接纳入**：`svc_audio`、`ntp_sync_task` 先改成"有限等待 + 喂狗"才安全。
 
 ### 4.17 崩溃记录：RTC 暂存 + wrap panic handler
 
@@ -418,13 +421,13 @@ idf.py size-files
                                  Power, IMU, IO, Camera, SysInfo
 5. fw_init()                  → Theme, Asset, Window, AppMgr, Script, UI, StatusBar, Input
 6. app_register_all()         → 注册所有内置 App
-7. fw_boot_animation()        → 全屏官方 Logo 静态展示 + 单声开机提示音（约 1.35 s）
+7. fw_boot_animation()        → 全屏官方 Logo 静态展示 + 单声开机提示音（约 2.05 s）
 8. fw_app_mgr_launch("Home")  → 显示桌面
 9. periph_storage_mount(内置) → 首屏之后挂载内置 SPIFFS（首次自动格式化）
 10. svc_watchdog_arm()        → 启动完成，打开看门狗超时自动重启
 ```
 
-时间预算（目标到首屏 < 2.5 s）见 `docs/03-design/04-data-flow.md`。
+时间预算（目标：上电到桌面 < 5 s；含开机画面 2.05 s）见 `docs/03-design/04-data-flow.md`。
 
 ---
 
@@ -448,7 +451,7 @@ App / 脚本 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC
 
 ### IMU 运动 / 姿态
 
-`svc_imu` 任务（50 ms 轮询；QMI8658 中断引脚未引出）→ 判定姿态变化 / 摇晃 / 抬手 → 发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION` → `svc_power` 熄屏时唤醒
+`svc_imu` 任务（50 ms 轮询；QMI8658 中断引脚未引出）→ 判定姿态变化 / 摇晃 / 抬手 → 发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION` / `SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_PICKUP` → `svc_power` 熄屏时唤醒
 
 详细见 `docs/03-design/04-data-flow.md`。
 

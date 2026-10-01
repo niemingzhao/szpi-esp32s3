@@ -39,8 +39,11 @@ typedef enum {
     // 存储
     SVC_EVENT_SD_MOUNTED,
     SVC_EVENT_SD_UNMOUNTED,
+    SVC_EVENT_SD_ERROR,
 
     // 网络
+    SVC_EVENT_WIFI_SCAN_STARTED,
+    SVC_EVENT_WIFI_SCAN_DONE,
     SVC_EVENT_WIFI_CONNECTING,
     SVC_EVENT_WIFI_CONNECTED,
     SVC_EVENT_WIFI_DISCONNECTED,
@@ -55,16 +58,22 @@ typedef enum {
     SVC_EVENT_TIME_CHANGED,
     SVC_EVENT_TIMEZONE_CHANGED,
 
-    // 主题
+    // 主题 / 语言
     SVC_EVENT_THEME_CHANGED,
+    SVC_EVENT_LANGUAGE_CHANGED,
 
     // 电源
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
+    // BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按）
+    SVC_EVENT_KEY,
+    SVC_EVENT_SHUTDOWN_REQUEST,
 
     // IMU
     SVC_EVENT_IMU_MOTION,
     SVC_EVENT_IMU_ORIENTATION,
+    SVC_EVENT_IMU_SHAKE,
+    SVC_EVENT_IMU_PICKUP,
 
     // 音频
     SVC_EVENT_AUDIO_PLAYBACK_STARTED,
@@ -91,8 +100,8 @@ typedef void (*svc_event_handler_t)(const svc_event_t *evt, void *user_data);
 esp_err_t svc_event_bus_init(void);
 esp_err_t svc_event_bus_subscribe(svc_event_id_t id, svc_event_handler_t h, void *user_data);
 esp_err_t svc_event_bus_unsubscribe(svc_event_id_t id, svc_event_handler_t h);
-esp_err_t svc_event_bus_publish(svc_event_id_t id, void *data, uint32_t len);
-esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t len);
+esp_err_t svc_event_bus_publish(svc_event_id_t id, const void *data, uint32_t len);
+esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, const void *data, uint32_t len);
 ```
 
 ### 2.3 实现要点
@@ -110,15 +119,20 @@ esp_err_t svc_settings_set_i32(const char *ns, const char *key, int32_t val);
 esp_err_t svc_settings_get_i32(const char *ns, const char *key, int32_t *val, int32_t def);
 esp_err_t svc_settings_set_u32(const char *ns, const char *key, uint32_t val);
 esp_err_t svc_settings_get_u32(const char *ns, const char *key, uint32_t *val, uint32_t def);
+esp_err_t svc_settings_set_u8(const char *ns, const char *key, uint8_t val);
+esp_err_t svc_settings_get_u8(const char *ns, const char *key, uint8_t *val, uint8_t def);
 esp_err_t svc_settings_set_str(const char *ns, const char *key, const char *val);
 esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_t len, const char *def);
 esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len);
 esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len);
+
+esp_err_t svc_settings_factory_reset(void);
 ```
 
-- 命名空间：`sys`、`wifi`、`script`、`app_<name>`
+- 命名空间：`sys`、`wifi`、`script`、App 私有（如 App 天气用 `weather`）
 - 设置变化发布对应的 `SVC_EVENT_*_CHANGED` 事件（如亮度、时区、主题）
 - 所有读写走 NVS，进程内不缓存
+- `svc_settings_factory_reset()` 擦除整个 NVS 分区，调用后应立即重启
 
 ## 4. svc_storage（存储服务）
 
@@ -151,6 +165,9 @@ esp_err_t svc_storage_iter_start(const char *dir, svc_storage_iter_t *iter);
 svc_storage_entry_t *svc_storage_iter_next(svc_storage_iter_t iter);
 void svc_storage_iter_end(svc_storage_iter_t iter);
 
+/* 容量查询 */
+esp_err_t svc_storage_get_info(periph_storage_type_t type, periph_storage_info_t *out);
+
 esp_err_t svc_storage_format(periph_storage_type_t type);
 ```
 
@@ -181,7 +198,7 @@ esp_err_t svc_time_format(int64_t ts, const char *fmt, char *buf, size_t len);
 
 ### 6.1 职责
 
-- 音乐播放：MP3 / WAV
+- 音乐播放：MP3 / WAV，支持本地文件、HTTP(S) 链接与外部 PCM 流
 - 录音：WAV 写入 TF 卡
 - 提示音（tone）：短促蜂鸣
 - 音量与静音
@@ -190,9 +207,10 @@ esp_err_t svc_time_format(int64_t ts, const char *fmt, char *buf, size_t len);
 
 ```c
 typedef enum {
-    SVC_AUDIO_SRC_FILE,     // 文件路径
+    SVC_AUDIO_SRC_FILE,     // 文件路径（支持）
+    SVC_AUDIO_SRC_URL,      // HTTP(S) 链接（支持，边下边播）
     SVC_AUDIO_SRC_TONE,     // 简单 tone
-    SVC_AUDIO_SRC_STREAM,   // 外部 PCM 流
+    SVC_AUDIO_SRC_STREAM,   // 外部 PCM 流（支持）
 } svc_audio_src_type_t;
 
 typedef enum {
@@ -257,27 +275,21 @@ esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
                 │  API Call      │
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   play_task 优先级 6, 核心 1, 栈 8 KB
-                │  play_task     │   解码 (helix MP3 / WAV)
-                │  状态机        │   写入 I2S
-                └───────┬────────┘
-                        ▼
-                ┌────────────────┐   rec_task（录音时启用）
-                │  rec_task      │   读取 I2S
-                │                │   写 WAV 头 + PCM
-                └───────┬────────┘
-                        ▼
-                ┌────────────────┐   tone_task
-                │  tone_task     │   短 tone 临时覆盖
-                │  (提示音)      │
-                └────────────────┘
+                ┌────────────────┐   svc_audio 优先级 6, 核心 1, 栈 4 KB
+                │  svc_audio     │   播放：解码 (helix MP3 / WAV) → I2S
+                │  状态机        │   录音：I2S → WAV 头 + PCM
+                └────────────────┘   提示音：正弦波临时占用播放通路
 ```
+
+播放 / 录音 / 提示音共用一条 I2S0（MCLK / BCLK / WS 是同一组引脚，MCLK = 采样率 × 256），
+所以采样率与时钟由服务统一维护，只有一个音频任务串行访问 I2S。
 
 ### 6.4 实现要点
 
 - MP3 用 helix 解码器；WAV 直接读 PCM
 - 文件读取经 `svc_storage` 的路径，数据经 VFS 直接读
-- 播放状态由互斥锁保护，事件回调经队列投递到 play_task
+- 文件 / HTTP(S) 链接 / 外部 PCM 流三种播放来源共用同一播放通路：链接由 HTTP 客户端边下边播，外部流由调用方提供 PCM 数据
+- 播放状态由互斥锁保护，事件回调经队列投递到 `svc_audio`
 - tone 用正弦波生成器临时占用播放通路，播完恢复
 
 ## 7. svc_net（网络服务）
@@ -334,8 +346,16 @@ esp_err_t svc_net_get_status(svc_net_status_t *status);
 esp_err_t svc_net_smartconfig_start(void);
 esp_err_t svc_net_smartconfig_stop(void);
 
+esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password);
+esp_err_t svc_net_prov_stop(void);
+bool svc_net_prov_is_active(void);
+
+typedef void (*svc_http_cb_t)(const char *body, esp_err_t err, void *user);
+
 esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
+esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
+                             svc_http_cb_t cb, void *user);
 ```
 
 ### 7.3 实现要点
@@ -355,38 +375,83 @@ typedef enum {
     SVC_BT_STATE_CONNECTED,
 } svc_bt_state_t;
 
+typedef struct {
+    uint8_t bda[6];
+    int8_t rssi;
+    char name[SVC_BT_NAME_MAX];
+} svc_bt_scan_result_t;
+
+typedef void (*svc_bt_data_cb_t)(const uint8_t *data, size_t len, void *user);
+
+/* 诊断信息（排查蓝牙问题时用） */
+typedef struct {
+    svc_bt_state_t state;
+    bool connected;
+    bool adv_want;
+    bool adv_ready;
+    bool adv_active;
+    bool scan_ready;
+    uint32_t gap_events;
+    uint32_t gap_last;
+} svc_bt_diag_t;
+
 esp_err_t svc_bt_init(void);          // 必须在 Wi-Fi 之前初始化（AGENTS 4.6）
+esp_err_t svc_bt_deinit(void);        // 仅关机前释放用
 svc_bt_state_t svc_bt_get_state(void);
+const char *svc_bt_state_name(svc_bt_state_t state);
+bool svc_bt_is_connected(void);
+esp_err_t svc_bt_get_diag(svc_bt_diag_t *out);   // 诊断：状态 / 广播 / 扫描 / GAP 事件计数
 esp_err_t svc_bt_adv_start(void);
 esp_err_t svc_bt_adv_stop(void);
-esp_err_t svc_bt_scan_start(void);
+esp_err_t svc_bt_scan_start(uint32_t duration_s);   // 0 = 默认 10 s
 esp_err_t svc_bt_scan_stop(void);
-esp_err_t svc_bt_hid_send_key(uint8_t keycode);
-esp_err_t svc_bt_hid_send_mouse(int8_t dx, int8_t dy, uint8_t buttons);
+esp_err_t svc_bt_get_scan_results(svc_bt_scan_result_t *out, size_t max, size_t *count);
+esp_err_t svc_bt_notify(const void *data, size_t len);
+esp_err_t svc_bt_register_data_cb(svc_bt_data_cb_t cb, void *user);   // 注销传 NULL
+
+/* svc_bt_hid.h：BLE HID 设备（键盘 / 鼠标 / 消费类控制） */
+esp_err_t svc_bt_hid_init(void);
+esp_err_t svc_bt_hid_deinit(void);
+bool svc_bt_hid_is_ready(void);
+esp_err_t svc_bt_hid_key(uint8_t usage, uint8_t modifier);
+esp_err_t svc_bt_hid_mouse(uint8_t buttons, int8_t dx, int8_t dy);
+esp_err_t svc_bt_hid_consumer(uint8_t usage, bool pressed);
+esp_err_t svc_bt_hid_key_click(uint8_t usage, uint8_t modifier);
+esp_err_t svc_bt_hid_consumer_click(uint8_t usage);
 ```
 
 - 仅 BLE 4.2，Bluedroid；控制器活动实例数保持 IDF 默认
+- 仅作外设（peripheral）角色：广播、被中心设备连接、GATT 从机读写与通知；不发起中心设备连接，不做 GATT 客户端读写
 - 事件发布 `SVC_EVENT_BT_STATE_CHANGED` / `SVC_EVENT_BT_SCAN_DONE`
-- HID 报告要等配对完成后才能发
+- HID 报告要等配对完成后才能发（`svc_bt_hid_is_ready()`）
+- GATTS / GAP 回调由 `svc_bt` 统一注册，再按 app_id / gatts_if 转发给 HID
 
 ## 9. svc_mqtt / svc_ws / svc_io / svc_camera
 
 ```c
 /* svc_mqtt */
+typedef void (*svc_mqtt_msg_cb_t)(const char *topic, const char *payload, size_t len, void *user);
+
 esp_err_t svc_mqtt_connect(const char *uri, const char *username, const char *password);
 esp_err_t svc_mqtt_publish(const char *topic, const char *payload, int qos);
-esp_err_t svc_mqtt_subscribe(const char *topic, int qos, void (*cb)(const char *topic, const char *payload));
+esp_err_t svc_mqtt_subscribe(const char *topic, int qos, svc_mqtt_msg_cb_t cb, void *user);
+esp_err_t svc_mqtt_unsubscribe(const char *topic);
+bool svc_mqtt_is_connected(void);
 esp_err_t svc_mqtt_disconnect(void);
 
-/* svc_ws */
-esp_err_t svc_ws_connect(const char *uri, void (*cb)(const char *data, size_t len));
-esp_err_t svc_ws_send(const char *data, size_t len);
+/* svc_ws：仅文本帧 */
+typedef void (*svc_ws_msg_cb_t)(const char *data, size_t len, void *user);
+
+esp_err_t svc_ws_connect(const char *uri, svc_ws_msg_cb_t cb, void *user);
+esp_err_t svc_ws_send(const char *data, size_t len);   /* 发送文本帧 */
+bool svc_ws_is_connected(void);
 esp_err_t svc_ws_disconnect(void);
 
 /* svc_io：外扩硬件能力，供脚本与 App 使用 */
 esp_err_t svc_io_gpio_write(uint8_t gpio, uint8_t level);
 int svc_io_gpio_read(uint8_t gpio);
 esp_err_t svc_io_pwm_set(uint8_t gpio, uint32_t freq_hz, uint8_t duty_percent);
+esp_err_t svc_io_pwm_stop(uint8_t gpio);
 esp_err_t svc_io_adc_read(uint8_t gpio, int *out_mv);
 esp_err_t svc_io_i2c_write(uint8_t addr, const uint8_t *data, size_t len);
 esp_err_t svc_io_i2c_read(uint8_t addr, uint8_t *data, size_t len);
@@ -395,14 +460,16 @@ esp_err_t svc_io_uart_write(const uint8_t *data, size_t len, uint32_t timeout_ms
 esp_err_t svc_io_uart_read(uint8_t *data, size_t len, size_t *read_len, uint32_t timeout_ms);
 
 /* svc_camera：封装 esp32-camera，App / 脚本不直接依赖该组件 */
-esp_err_t svc_camera_open(void);
+esp_err_t svc_camera_init(void);                  /* 服务初始化，不打开硬件 */
+esp_err_t svc_camera_open(svc_camera_format_t fmt, svc_camera_size_t size);
 esp_err_t svc_camera_close(void);
 bool svc_camera_is_open(void);
-esp_err_t svc_camera_capture(void **out_buf, size_t *out_len, uint16_t *w, uint16_t *h, bool jpeg);
-void svc_camera_release(void *buf);
+esp_err_t svc_camera_capture(svc_camera_frame_t *out);
+void svc_camera_release(void);
 ```
 
 - `svc_io` 与 `svc_camera` 是薄封装，直接转发到 `periph_ext` / `periph_camera`
+- `svc_ws` 只收发文本帧，不做二进制帧
 - MQTT / WebSocket 使用各自托管组件
 
 ## 10. svc_power（电源服务）
@@ -432,21 +499,38 @@ esp_err_t svc_power_request_shutdown(void);
 
 ```c
 typedef enum {
-    SVC_IMU_EVT_ORIENTATION,   // 姿态变化
-    SVC_IMU_EVT_SHAKE,         // 摇晃
-    SVC_IMU_EVT_PICKUP,        // 抬手
-} svc_imu_evt_t;
-
-typedef void (*svc_imu_cb_t)(svc_imu_evt_t evt, void *user);
+    SVC_IMU_ORIENTATION_PORTRAIT,
+    SVC_IMU_ORIENTATION_LANDSCAPE,
+    SVC_IMU_ORIENTATION_PORTRAIT_FLIP,
+    SVC_IMU_ORIENTATION_LANDSCAPE_FLIP,
+} svc_imu_orientation_t;
 
 esp_err_t svc_imu_init(void);
+bool svc_imu_is_moving(void);
+svc_imu_orientation_t svc_imu_get_orientation(void);
 esp_err_t svc_imu_read(periph_imu_data_t *out);
-esp_err_t svc_imu_register_callback(svc_imu_cb_t cb, void *user);
 ```
 
 - `imu_task`（优先级 3，核心 0，50 ms 周期）采样
-- 判定姿态变化 / 摇晃 / 抬手，发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION`
+- 判定运动 / 朝向变化，发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION`；判定摇晃与抬手，发布 `SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_PICKUP`
+- 阈值可用 `svc_settings` 的 `imu` 命名空间调整，见下表；服务启动时读一次并缓存，运行期改 NVS 需重启服务（或重启设备）才生效
 - 熄屏时用于姿态唤醒
+
+阈值 key（比例类按 100 倍整数存）：
+
+| key | 默认 | 语义 |
+|-----|------|------|
+| `motion_acc_pct` | 15 | 合加速度偏离 1 g 的百分比（存 15 = 15%） |
+| `motion_gyro_dps` | 60 | 角速度阈值（存 60 = 60 °/s，不是 ×100） |
+| `orient_axis_g` | 60 | 朝向判定时重力在某轴上的占比（存 60 = 0.60） |
+| `shake_count` | 3 | 摇晃判定窗口内的越阈次数 |
+| `shake_window_ms` | 1000 | 摇晃统计窗口（ms） |
+| `pickup_still_ms` | 2000 | 抬手判定要求的连续静止时长（ms） |
+| `pickup_step_g` | 35 | 抬手判定的加速度阶跃（存 35 = 0.35 g） |
+| `pickup_hold_ms` | 800 | 阶跃后等待竖持姿态的窗口（ms） |
+
+- 各 key 读取失败或取值越界（合理范围见 `svc_imu.c`）时回落到上表默认值；默认值与原编译期常量等价，灵敏度不变
+- 摇晃与抬手的冷却时间（2000 ms / 3000 ms）是固定行为常量，不入 NVS
 
 ## 12. 服务初始化顺序
 
@@ -475,17 +559,18 @@ esp_err_t services_init(void) {
 
 ## 13. 任务模型
 
-| 服务 | 任务名 | 优先级 | 核心 |
+| 服务 / 模块 | 任务名 | 优先级 | 核心 |
 |------|--------|--------|------|
 | Event Bus | `event_bus_task` | 4 | 0 |
 | Time | `ntp_sync_task` | 2 | 0 |
-| Audio | `play_task` | 6 | 1 |
-| Audio | `rec_task` | 5 | 1 |
-| Audio | `tone_task` | 4 | 1 |
-| Network | `net_event_task` | 4 | 0 |
+| Audio | `svc_audio` | 6 | 1 |
 | Power | `power_task` | 2 | 0 |
 | IMU | `imu_task` | 3 | 0 |
 | Storage | `sd_monitor_task` | 3 | 0 |
+| Script（Framework） | `script_task` | 4 | 0 |
+
+Wi-Fi / IP 事件由 ESP-IDF 的 `esp_event` 默认事件循环任务处理；`svc_net` 的 HTTP 请求
+按需创建临时任务 `svc.http`（优先级 5）。
 
 ## 14. 跨服务依赖
 

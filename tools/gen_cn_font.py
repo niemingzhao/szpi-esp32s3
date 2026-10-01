@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""用 Pillow 从 TTF 生成 LVGL 字体 C 文件。
+"""用 Pillow 从 TTF 生成 LVGL 9 的字体 C 文件。
 
 两类字体：
   1) UI 字体（--cs ui，默认）：只含界面用字（CN_CHARS + ASCII），14/16 px 两档，
@@ -142,7 +142,6 @@ def emit(ttf, size, out_path, name, chars, bpp, fallback):
     L.append('    }')
     L.append('};')
     L.append('')
-    L.append('static lv_font_fmt_txt_glyph_cache_t cache;')
     L.append('static const lv_font_fmt_txt_dsc_t font_dsc = {')
     L.append('    .glyph_bitmap = glyph_bitmap,')
     L.append('    .glyph_dsc = glyph_dsc,')
@@ -152,8 +151,7 @@ def emit(ttf, size, out_path, name, chars, bpp, fallback):
     L.append('    .cmap_num = 2,')
     L.append('    .bpp = %d,' % bpp)
     L.append('    .kern_classes = 0,')
-    L.append('    .bitmap_format = 0,')
-    L.append('    .cache = &cache')
+    L.append('    .bitmap_format = 0')
     L.append('};')
     L.append('')
     L.append('const lv_font_t %s = {' % name)
@@ -192,7 +190,7 @@ def main():
     if not os.path.isfile(ttf):
         raise SystemExit('找不到字体源文件：%s\n请把 NotoSansSC-VF.ttf（OFL 授权）放到 tools/fonts/，'
                          '或显式传入路径。' % ttf)
-    outdir = args.outdir or os.path.join(here, 'framework', 'assets')
+    outdir = args.outdir or os.path.join(here, 'main', 'framework', 'assets')
 
     if args.cs == 'gb2312':
         size = int(args.sizes.split(',')[0])

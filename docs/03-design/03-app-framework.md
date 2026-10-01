@@ -6,7 +6,7 @@
 
 | 维度 | 原生 App | 脚本 |
 |------|----------|------|
-| 语言 | C | Lua 5.4 |
+| 语言 | C | Lua 5.5 |
 | 存放 | 编译进固件（`main/apps/`） | TF 卡脚本目录 |
 | 注册 | `fw_app_mgr_register()` | 脚本管理器扫描目录 |
 | 生命周期 | create / start / pause / resume / destroy / back | 加载 / 执行 / 停止 |
@@ -258,7 +258,7 @@ ESP_LOGE(TAG, "Failed to parse: %s", input);
 2. **永远在 on_destroy 释放所有资源**（LVGL 对象、定时器、订阅、互斥锁）
 3. **避免在 on_create 中做耗时操作**
 4. **使用 ctx 结构体而非全局变量**
-5. **配置项用 svc_settings，命名空间用 `app_<name>`**
+5. **配置项用 svc_settings，命名空间用 App 名（如 App 天气用 `weather`）**
 6. **错误必须优雅处理**（不崩溃，用 `fw_ui_toast()` 提示）
 7. **资源路径用绝对路径**：`/sdcard/...` 或 `/internal/...`
 8. **图标 64×64，编译进固件**
@@ -281,41 +281,64 @@ ESP_LOGE(TAG, "Failed to parse: %s", input);
 
 ### 10.3 运行时
 
-- Lua 5.4 运行时在 `fw_script` 内
+- Lua 5.5 运行时在 `fw_script` 内
 - 脚本任务 `script_task`（优先级 4，核心 0）
-- 脚本配置经 `svc_settings`（命名空间 `script` 或脚本私有）持久化
+- 脚本配置经 `svc_settings` 持久化（命名空间 `script`）
+
+### 10.4 权限与沙箱
+
+- 脚本头部用注释声明要用的能力模块：`-- @perm io,file,net`；模块名与 §11 的绑定表一致，解析范围是文件开头若干行，与元信息解析一致
+- 不写声明表示全部模块可用，兼容内置示例脚本
+- 写了声明就只注册列出的模块，未声明的模块在脚本里为 nil，调用即报 Lua 错
+- `ui` / `sys` / `timer` 是基础能力，无论怎么写声明都会注册：脚本靠它们建界面、取时间，并在出错时给出提示
+- 声明里出现不认识的模块名时记一条告警并忽略该名字
+- 运行时只打开 base / string / table / math / utf8，不开 io / os / package / debug
+- ESP32-S3 无 MMU，这是软件级限制
 
 ## 11. 脚本能力绑定
 
-| 能力 | 绑定到 |
-|------|--------|
-| 显示 / 界面 | `fw_ui`（页面 / 控件 / 图片 / 进度 / Toast / 对话框） |
-| 输入 | `fw_input`、`periph_touch` 缓存的触摸、IMU 姿态、按键 |
-| 音频播放 / 录音 | `svc_audio` |
-| 摄像头预览 / 拍照 | `svc_camera` |
-| GPIO / PWM / I2C / UART / ADC | `svc_io` |
-| 文件读写 | `svc_storage` |
-| 网络 | `svc_net` / `svc_mqtt` / `svc_ws` |
-| 蓝牙 BLE | `svc_bt` |
-| 时间 / 系统信息 | `svc_time` / `svc_sysinfo` |
-| 事件订阅 / 发布 | `svc_event_bus` |
-| 系统通知（Toast） | `fw_ui` |
+Lua 侧以模块（全局表）的形式暴露能力，模块名与函数清单见 `main/framework/src/fw_script.c`。
 
-脚本不直接调用 Peripherals / Drivers；硬件能力一律经 `svc_io`。
+| 模块 | 提供的函数 |
+|------|-----------|
+| `ui` | `page` / `label` / `row` / `image` / `progress` / `toast`；控件方法 `set_text` / `set_value` / `set_src` / `set` |
+| `sys` | `uptime` / `now` / `localtime` / `mem`（`mem` 返回内部 SRAM 剩余 / 历史最低与 PSRAM 剩余，单位字节） |
+| `timer` | `every` |
+| `input` | `on_click`（订阅触摸点击）；BOOT 键事件请用 `event.subscribe("key", fn)` |
+| `event` | `subscribe` / `publish`；固定事件名见实现里的 EVENT_MAP（触摸 / BOOT 按键（`key`）/ IMU 姿态与运动 / Wi-Fi / 蓝牙状态 / 亮度 / TF 卡挂载 / 录音结束 / 脚本启停），另有 `user.` 开头的自定义事件名，同一名字稳定映射到同一事件号。`key` 的回调参数是 1 字节字符串，`string.byte(v)` 得事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按 |
+| `io` | `gpio_write` / `gpio_read` / `pwm_set` / `pwm_stop` / `adc_read` / `i2c_write` / `i2c_read` / `uart_config` / `uart_write` / `uart_read` |
+| `file` | `read` / `write` / `remove` / `exists` / `list` |
+| `audio` | `play` / `stop` / `tone`（`tone(freq_hz[, ms])`，默认 200 ms 的提示音）/ `record_start` / `record_stop` / `get_volume` / `set_volume` / `set_mute` |
+| `net` | `http_get` |
+| `mqtt` | `connect` / `publish` / `subscribe` / `disconnect` / `is_connected` |
+| `ws` | `connect` / `send` / `is_connected` / `close`；仅文本帧，`send` 发文本 |
+| `bt` | `state_name` / `is_connected` / `adv` / `scan_start` / `scan_stop` / `scan_results` / `notify` / `hid_key` / `hid_mouse` / `hid_consumer`；只做从机（广播 / 被连接 / GATT 从机读写与通知），不做中心设备连接与 GATT 客户端读写；HID 报告要等主机配对完成才发得出去 |
+| `camera` | `open` / `close` / `is_open` / `capture`；只拍照，`capture(path)` 把照片存到 TF 卡 |
+| `imu` | `read` / `is_moving` / `orientation` |
+| `settings` | `get` / `set` / `get_int` / `set_int` |
+
+`ui.image` 只按路径显示图片（路径同样走 `svc_storage` 的存储目录），脚本不做摄像头取帧预览。
+
+脚本不直接调用 Peripherals / Drivers；硬件（GPIO / PWM / I2C / UART / ADC）一律经 `svc_io`。
 
 ## 12. 脚本示例
 
 ```lua
--- 每秒刷新一次时间，点击屏幕切换 12 / 24 小时制
+-- @name 时钟
+-- @desc 每秒刷新时间，点击屏幕切换 12 / 24 小时制
 
 local hour24 = true
-
 local page = ui.page()
-local label = ui.label(page, "00:00")
+local label = ui.label(page, "00:00:00")
 
-function on_tick()
+local function on_tick()
     local t = sys.localtime()
-    label:set_text(string.format("%02d:%02d:%02d", t.hour, t.min, t.sec))
+    local h = t.hour
+    if not hour24 then
+        h = h % 12
+        if h == 0 then h = 12 end
+    end
+    label:set_text(string.format("%02d:%02d:%02d", h, t.min, t.sec))
 end
 
 input.on_click(function()

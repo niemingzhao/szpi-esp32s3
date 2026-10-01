@@ -6,7 +6,7 @@
 深色主题下看不出来，浅色主题下就是"白字白底"，直接看不见
 （曾经发生在通知中心的关闭按钮和通用对话框按钮上）。
 
-本脚本扫描 framework/src 与 apps 下的 .c 文件，找出 lv_label_create 之后
+本脚本扫描 main/framework/src 与 main/apps 下的 .c 文件，找出 lv_label_create 之后
 若干行内没有 text_color 的地方。改完 UI 跑一下，输出的每一处都应该补上颜色。
 
 用法：
@@ -34,8 +34,8 @@ def scan(path: Path):
 
 
 def main() -> int:
-    files = sorted((ROOT / "framework" / "src").glob("*.c"))
-    files += sorted((ROOT / "apps").rglob("*.c"))
+    files = sorted((ROOT / "main" / "framework" / "src").glob("*.c"))
+    files += sorted((ROOT / "main" / "apps").rglob("*.c"))
 
     bad = 0
     for f in files:

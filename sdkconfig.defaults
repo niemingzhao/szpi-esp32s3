@@ -5,85 +5,76 @@ CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 
-# FreeRTOS 运行时统计：DBG-003 性能监控要算任务 CPU 占用（uxTaskGetSystemState）
+# FreeRTOS 运行时统计：性能监控 App 要算任务 CPU 占用（uxTaskGetSystemState）
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 
-# GCC 14 把一批警告默认升级成错误；LVGL 8.3 自带的 lodepng 会因此编译失败（uint32_t* vs unsigned*）
+# GCC 14 把一批警告默认升级成错误；托管组件里的旧 C 代码靠顶层 CMakeLists.txt 单独降级
 CONFIG_COMPILER_DISABLE_GCC14_WARNINGS=y
 
-# Bluetooth
-CONFIG_BT_ENABLED=y
-
-# PSRAM
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
-# 通用 malloc 一律优先 PSRAM（0 = 全部优先外部 RAM）。
-# 原因：LVGL 的控件对象（每个几百字节）走的是普通 malloc，18 个 App 的桌面会吃掉近 20 KB
-# 内部 RAM，再叠加 App 的静态数组，Wi-Fi 算 WPA PSK 时就分配不出一个互斥量（lock_init_generic
-# abort）。注意：FreeRTOS 对象 / 任务栈 / DMA 缓冲走 heap_caps_malloc(INTERNAL)，
-# 不受这个阈值影响（BLE 的队列与栈仍然在内部 RAM）。
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
-
-# 给"只能用内部内存"的分配（DMA / FreeRTOS 对象 / BLE 控制器）预留的内部 RAM。
-# IDF 默认 32768；实测本机内部 RAM 很紧（Wi-Fi 关联 + BLE 广播 + SPIFFS 挂载同时发生时会连
-# 一个互斥量都创建不出来，见 AGENTS 4.2），降到 16 KB：大块 DMA 缓冲都在开机早期分配，
-# 运行期只有小请求，16 KB 足够。
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384
-
-# Wi-Fi 静态收发缓冲：默认 16/16，每块约 1.6 KB 且只能用内部 RAM。本机只跑 UI / HTTP，
-# 8/8 足够，能省下十几 KB 内部 RAM。
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
-CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
-
-# CPU
+# CPU 与缓存
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
-# FATFS
+# PSRAM
+# 通用 malloc 一律优先 PSRAM（0 = 全部优先外部 RAM）：LVGL 控件对象、App 数据结构等都放 PSRAM，
+# 内部 RAM 要留给 BLE 控制器 / 主机队列、音频 I2S DMA、LVGL 绘制缓冲、各服务任务与队列。
+# MALLOC_RESERVE_INTERNAL 给"只能用内部内存"的分配留一块（大块 DMA 缓冲都在开机早期分配）。
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Wi-Fi 静态收发缓冲：每块约 1.6 KB 且只能用内部 RAM，8/8 足够
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+
+# HTTPS 客户端（天气等）：挂内置证书 bundle，https:// 才能完成证书校验
+# （bundle 会占一点 Flash；TLS 握手还要一块内部 RAM，见 AGENTS 4.20）
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# FATFS：TF 卡非 ASCII 长文件名（三项必须一起保留）
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_CODEPAGE_936=y
 CONFIG_FATFS_API_ENCODING_UTF_8=y
 
-# LVGL
-CONFIG_LV_COLOR_16_SWAP=y
-CONFIG_LV_MEM_CUSTOM=y
+# SPIFFS：内置 Flash 文件系统（改后首次挂载会重新格式化 storage 分区）
+CONFIG_SPIFFS_OBJ_NAME_LEN=128
+
+# LVGL 9（颜色 16 bit；内存分配走 C 库，即 IDF 堆；内嵌字体；启用图片解码）
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
-CONFIG_LV_USE_PNG=y
+CONFIG_LV_FONT_FMT_TXT_LARGE=y
+CONFIG_LV_USE_LODEPNG=y
 CONFIG_LV_USE_GIF=y
-# BMP 解码：图片 App 显示 TF 卡里的 .bmp；相机拍照时用它写小尺寸缩略图（我们自己写 BMP 头）
 CONFIG_LV_USE_BMP=y
+CONFIG_LV_USE_TJPGD=y
 
-# SPIFFS：长文件名（与硬件规格一致，改后首次挂载会重新格式化存储分区）
-CONFIG_SPIFFS_OBJ_NAME_LEN=128
-
-# 蓝牙：只用 BLE 4.2（01-hardware-spec.md 的目标配置）。
-# IDF 默认把 5.0 特性打开，而扩展广播 / 周期广播会明显增加控制器内存：
-# 本板实测 BLE_INIT: Malloc failed -> 控制器断言 -> 重启循环，所以必须显式关掉。
+# 蓝牙：只用 BLE 4.2（两行必须一起写，BLE 5.0 的扩展广播会明显增加控制器内存）
+CONFIG_BT_ENABLED=y
 CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
 # CONFIG_BT_BLE_50_FEATURES_SUPPORTED is not set
 
-# BLE 内存：控制器初始化时要一块 30 KB 的连续内存，实测在首屏之后（WiFi/LVGL 已占用）会
-# "BLE_INIT: Malloc failed" + 断言重启 —— 对策是把 svc_bt_init() 提前到 Wi-Fi 之前
-# （见 AGENTS 4.6），并让 BT/BLE 的动态内存优先用 PSRAM。
+# BLE 内存：控制器初始化要一块 30 KB 连续内部内存，主机侧动态数据优先放 PSRAM
 CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y
 CONFIG_BT_ACL_CONNECTIONS=2
-
-# 控制器活动实例数（ble_max_act）：这个值同时决定控制器"环境内存池"的大小。
-# 曾经为了省内存改成 2，结果 LE Set Advertising Enable 被控制器以 HCI 0x07 Memory Full
-# 拒收（adv 环境分配不出来），手机搜不到设备。改回 IDF 默认 6，别再往下调。
+# 控制器活动实例数（ble_max_act）同时决定控制器"环境内存池"大小，保持 IDF 默认 6，不要下调
 CONFIG_BT_CTRL_BLE_MAX_ACT=6
 
 # 不用 DTM（直接测试模式），关掉少占一点控制器内存
 # CONFIG_BT_CTRL_DTM_ENABLE is not set
 
-# Camera (GC0308 / DVP)：SCCB 走新版 i2c_master 驱动 + I2C1（引脚 GPIO1/2 与 I2C0 复用）
+# 摄像头（GC0308 / GC2145；SCCB 走新版 i2c_master + I2C1）
+CONFIG_GC0308_SUPPORT=y
+CONFIG_GC2145_SUPPORT=y
 CONFIG_SCCB_HARDWARE_I2C_DRIVER_NEW=y
 CONFIG_SCCB_HARDWARE_I2C_PORT1=y

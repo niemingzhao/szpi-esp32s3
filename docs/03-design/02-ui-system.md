@@ -10,7 +10,7 @@ UI 系统基于 LVGL 9 + esp_lvgl_port 2.x，由 Framework 层统一封装。
 ┌──────────────────────────────────────────────────────────┐
 │                 LVGL Display 320×240                      │
 ├──────────────────────────────────────────────────────────┤
-│ [返回][主页]  10:30   [Wi-Fi][BLE][声][录][摄][卡]         │  ← fw_statusbar (28 px)
+│ [返回][主页]   10:30    [摄][卡][录][亮][蓝牙][声][Wi-Fi]  │  ← fw_statusbar (28 px)
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │              当前界面（原生 App 或脚本）                   │
@@ -32,30 +32,42 @@ UI 系统基于 LVGL 9 + esp_lvgl_port 2.x，由 Framework 层统一封装。
 
 ```
 ┌────────────────────────────────────────────────────┐
-│ [返回][主页]        10:30      [Wi-Fi][BLE][声][录][摄][卡] │
+│ [返回][主页]    10:30     [摄][卡][录][亮][蓝牙][声][Wi-Fi] │
 └────────────────────────────────────────────────────┘
-   左：返回 / 主页        中：时间        右：状态图标
+   左：返回 / 主页    中：时间（偏左）    右：状态图标
 ```
+
+右侧状态图标从右往左依次为：Wi-Fi（`x=-10`）、音乐（`-30`）、蓝牙（`-50`）、
+亮度（`-70`）、录音（`-90`）、TF 卡（`-110`）、摄像头（`-130`），相邻右边缘间距
+20 px。时间不再对齐屏幕正中，而是居中于左按钮组与右侧图标组之间的可用区域：左按钮
+组右缘在 80 px，摄像头左缘在 176 px，中点约 128 px，故用 `LV_ALIGN_CENTER` 加
+`x=-32`。时钟最宽约 39 px（`23:59`）时右缘约 148 px，与摄像头左缘留出约 28 px，
+与主页按钮右缘也留约 28 px，320 px 下不重叠。
 
 ### 2.2 接口
 
 ```c
 esp_err_t fw_statusbar_init(void);
+esp_err_t fw_statusbar_rebuild(void);
+
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);
+esp_err_t fw_statusbar_set_music_playing(bool on);
 esp_err_t fw_statusbar_set_bluetooth(bool on);
-esp_err_t fw_statusbar_set_playing(bool on);
-esp_err_t fw_statusbar_set_recording(bool on);
-esp_err_t fw_statusbar_set_camera(bool on);
-esp_err_t fw_statusbar_set_sd(bool mounted);
+esp_err_t fw_statusbar_set_brightness(uint8_t percent);
 ```
+
+录音与 TF 卡图标由状态栏内部订阅事件维护（不导出 setter）。
 
 ### 2.3 实现要点
 
-- 订阅事件更新图标：`SVC_EVENT_TIME_CHANGED`、`SVC_EVENT_WIFI_*`、`SVC_EVENT_BT_STATE_CHANGED`、`SVC_EVENT_AUDIO_*`、`SVC_EVENT_SD_*`
+- 订阅事件更新图标：`SVC_EVENT_TIME_CHANGED`、`SVC_EVENT_WIFI_*`、`SVC_EVENT_BT_STATE_CHANGED`、`SVC_EVENT_AUDIO_PLAYBACK_*`、`SVC_EVENT_AUDIO_RECORD_*`、`SVC_EVENT_SD_*`、`SVC_EVENT_BRIGHTNESS_CHANGED`
+- 图标语义：Wi-Fi 连接 / 蓝牙非 OFF 时点亮（主色文字），否则置灰；音乐播放时显示主色，停止时隐藏；亮度按背光百分比分三档；录音中显示红点（`error`），结束隐藏；TF 卡挂载时点亮、卸载置灰；摄像头打开时用强调色、关闭时置灰
+- 摄像头图标不新增事件，由状态栏已有的 1 s `lv_timer` 顺带查一次 `svc_camera_is_open()` 刷新
 - 左侧返回 / 主页按钮分别调用 `fw_app_mgr_back()` / `fw_app_mgr_back_to_home()`；`fw_app_mgr_back()` 会先询问当前 App 的 `on_back()`（用于 App 内返回上一级页面）
 - 状态栏高度由 `FW_STATUSBAR_H` 定义；App 内容区与浮层都以此为顶部偏移
 - 状态栏按钮用 `lv_obj_set_ext_click_area()` 向四周扩大触摸区域（视觉尺寸不变），弥补面板触摸与显示位置的微小偏差
 - 蓝牙图标跟随 BLE 状态：`svc_bt_get_state() != SVC_BT_STATE_OFF` 时点亮
+- 重建时用 `svc_audio_get_state()` / `svc_storage_get_info()` / `svc_camera_is_open()` 同步一次真实状态（事件在订阅之前发布过也不会漏）
 
 ## 3. 主题系统
 
@@ -189,7 +201,7 @@ const fw_app_desc_t app_home_desc = {
 开机:
   1. 隐藏状态栏等全局浮层，切到全屏黑底
   2. 居中显示立创官方 120×120 Logo（静态展示）
-  3. 解除静音后等功放稳定，再播一声 1 kHz / 300 ms 提示音（全程约 1.35 s）
+  3. 解除静音后等功放稳定，再播一声 1 kHz / 300 ms 提示音（全程约 2.05 s）
   4. 恢复浮层，由 main 切到桌面
 ```
 
@@ -203,6 +215,7 @@ const fw_app_desc_t app_home_desc = {
 | 长按 | 弹出菜单 / 删除 |
 | 滑动 | 不使用（列表 / 桌面翻页除外） |
 | 状态栏按钮 | 返回、主页 |
+| 状态栏图标 | 时间、Wi-Fi、音乐、蓝牙、亮度、录音、TF 卡、摄像头（见第 2 节） |
 
 ## 10. LVGL 集成要点
 
@@ -223,6 +236,11 @@ const lvgl_port_display_cfg_t disp_cfg = {
     .hres = 320,
     .vres = 240,
     .monochrome = false,
+    .rotation = {                  // 与 drv_st7789 设的面板方向一致（已交换 XY + 镜像 X）
+        .swap_xy = true,
+        .mirror_x = true,
+        .mirror_y = false,
+    },
     .flags = {
         .buff_dma = true,
         .buff_spiram = false,      // 绘制缓冲放内置 DMA 内存（见 AGENTS.md 4.2）
@@ -275,7 +293,7 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 |------|------|
 | 状态栏 | 高 28（`FW_STATUSBAR_H`），底部 1 px 线 |
 | 状态栏按钮 | 32 × 20，另加 `lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
-| 状态栏位置 | 左：返回 x=8、主页 x=48；右：状态图标从右往左排 |
+| 状态栏位置 | 左：返回 x=8、主页 x=48；中：时间 `LV_ALIGN_CENTER` x=-32（居中于左按钮组与右图标组之间）；右：状态图标从右往左排（Wi-Fi -10、音乐 -30、蓝牙 -50、亮度 -70、录音 -90、TF 卡 -110、摄像头 -130），间距 20 |
 | 页面内边距 | 12（内容区 `pad_all`），行间距 8（`pad_row`） |
 | 入口卡片 / 列表项 | 高 50 / 高 38 |
 | 桌面格子 | 70 × 86，4 列，列间距 8，网格整体上边距 6 |

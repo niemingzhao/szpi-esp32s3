@@ -98,7 +98,7 @@ fw_boot_animation ──→ fw_asset, svc_audio
 
 ```
 fw_script
-  ├── Lua 5.4 运行时（espressif/lua）
+  ├── Lua 5.5 运行时（espressif/lua）
   ├── 脚本目录扫描 / 元信息 / 示例脚本释放 / 网络下载
   ├── 界面 / 输入 / 通知绑定 ──→ fw_ui, fw_input
   ├── 系统能力绑定 ──→ svc_audio, svc_camera, svc_storage, svc_net,
@@ -214,11 +214,11 @@ lvgl/lvgl                       # GUI 库
 espressif/esp_lvgl_port         # LVGL 适配层
 espressif/esp_lcd_touch_ft5x06  # FT6336 触摸（I2C panel IO v2）
 espressif/esp32-camera          # GC0308 / GC2145 摄像头
-espressif/lua                   # Lua 5.4 运行时（脚本）
+espressif/lua                   # Lua 5.5 运行时（脚本）
 chmorgan/esp-libhelix-mp3       # MP3 解码
 espressif/esp_websocket_client  # WebSocket 客户端
 espressif/mqtt                  # MQTT 客户端（IDF v6 起为独立组件）
-espressif/json                  # JSON（IDF v6 起为独立组件）
+espressif/cjson                 # JSON 解析（IDF v6 起为独立组件）
 ```
 
 各组件使用各自最新稳定版本。

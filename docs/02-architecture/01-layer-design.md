@@ -31,7 +31,7 @@ Apps       ──→ Framework ──→ Services ──→ Peripherals ──�
 - `lvgl_port_lock/unlock` 可在 Peripherals / Services 中使用（LVGL display、触摸 input device）
 - `esp_timer` / `FreeRTOS` API 可在任何层使用
 - 第三方组件的纯函数可在 Services / Framework / Apps 中直接调用
-- `fw_input` 可直接注册 `periph_button` 回调获取 BOOT 键事件（按键事件不经事件总线）
+- `fw_input` 直接注册 `periph_button` 回调获取 BOOT 键事件，并把它转发到事件总线（`SVC_EVENT_KEY`）供脚本订阅
 - 脚本对硬件（GPIO / PWM / I2C / UART / ADC）的访问经 `svc_io`，不直接调用 Peripherals
 
 ## 2. 静态库组织
@@ -105,7 +105,7 @@ esp_err_t bsp_init(esp_lcd_panel_handle_t *panel,
 **约束**：
 - 不调用任何 Peripherals / Services / Framework
 - 函数全部阻塞
-- 不创建 FreeRTOS 任务（ISR 注册除外）
+- 不创建 FreeRTOS 任务（例外：`drv_key` 的去抖任务 `key_task`；其余驱动只注册 ISR）
 
 ### 3.2 Peripherals 层
 
@@ -230,6 +230,7 @@ bool fw_script_is_running(void);
 - 运行时、脚本管理、绑定统一放在 `fw_script`
 - 绑定调用 Framework 自身与 Services（硬件经 `svc_io`）
 - 同一时刻只运行一个前台脚本
+- 脚本头部用 `-- @perm io,file,net` 声明能力模块，未声明的模块在脚本里为 nil（不写声明表示全部可用）
 - 脚本错误不得影响系统
 
 ## 4. 跨层通信：事件总线
@@ -243,8 +244,11 @@ typedef enum {
     /* 存储 */
     SVC_EVENT_SD_MOUNTED,
     SVC_EVENT_SD_UNMOUNTED,
+    SVC_EVENT_SD_ERROR,
 
     /* 网络 */
+    SVC_EVENT_WIFI_SCAN_STARTED,
+    SVC_EVENT_WIFI_SCAN_DONE,
     SVC_EVENT_WIFI_CONNECTING,
     SVC_EVENT_WIFI_CONNECTED,
     SVC_EVENT_WIFI_DISCONNECTED,
@@ -259,16 +263,22 @@ typedef enum {
     SVC_EVENT_TIME_CHANGED,
     SVC_EVENT_TIMEZONE_CHANGED,
 
-    /* 主题 */
+    /* 主题 / 语言 */
     SVC_EVENT_THEME_CHANGED,
+    SVC_EVENT_LANGUAGE_CHANGED,
 
     /* 电源 */
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
+    /* BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按） */
+    SVC_EVENT_KEY,
+    SVC_EVENT_SHUTDOWN_REQUEST,
 
     /* IMU */
     SVC_EVENT_IMU_MOTION,
     SVC_EVENT_IMU_ORIENTATION,
+    SVC_EVENT_IMU_SHAKE,
+    SVC_EVENT_IMU_PICKUP,
 
     /* 音频 */
     SVC_EVENT_AUDIO_PLAYBACK_STARTED,
@@ -299,8 +309,8 @@ typedef void (*svc_event_handler_t)(const svc_event_t *evt, void *user);
 esp_err_t svc_event_bus_init(void);
 esp_err_t svc_event_bus_subscribe(svc_event_id_t id, svc_event_handler_t h, void *user);
 esp_err_t svc_event_bus_unsubscribe(svc_event_id_t id, svc_event_handler_t h);
-esp_err_t svc_event_bus_publish(svc_event_id_t id, void *data, uint32_t len);
-esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t len);
+esp_err_t svc_event_bus_publish(svc_event_id_t id, const void *data, uint32_t len);
+esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, const void *data, uint32_t len);
 ```
 
 ### 4.3 分发机制
@@ -315,10 +325,11 @@ esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t
 
 | Namespace | 用途 |
 |-----------|------|
-| `sys` | 系统设置（亮度、音量、主题、熄屏时间） |
+| `sys` | 系统设置（亮度、音量、时区、主题、熄屏时间、崩溃记录） |
 | `wifi` | Wi-Fi 配置（SSID、密码、自动重连） |
-| `script` | 脚本系统设置 |
-| `app_<name>` | 每个 App 自己的设置 |
+| `script` | 脚本配置 |
+| `imu` | IMU 判定阈值（运动 / 朝向 / 摇晃 / 抬手，比例类按 100 倍整数存） |
+| App 私有 | 每个 App 自己的设置，用 App 名作命名空间（如 App 天气用 `weather`） |
 
 ### 5.2 配置 API
 
@@ -328,10 +339,13 @@ esp_err_t svc_settings_set_i32(const char *ns, const char *key, int32_t val);
 esp_err_t svc_settings_get_i32(const char *ns, const char *key, int32_t *val, int32_t def);
 esp_err_t svc_settings_set_u32(const char *ns, const char *key, uint32_t val);
 esp_err_t svc_settings_get_u32(const char *ns, const char *key, uint32_t *val, uint32_t def);
+esp_err_t svc_settings_set_u8(const char *ns, const char *key, uint8_t val);
+esp_err_t svc_settings_get_u8(const char *ns, const char *key, uint8_t *val, uint8_t def);
 esp_err_t svc_settings_set_str(const char *ns, const char *key, const char *val);
 esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_t len, const char *def);
 esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len);
 esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len);
+esp_err_t svc_settings_factory_reset(void);
 ```
 
 设置变化会发布对应的 `SVC_EVENT_*_CHANGED` 事件。
