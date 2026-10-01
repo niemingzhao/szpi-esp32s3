@@ -13,32 +13,26 @@ Peripherals 层屏蔽硬件差异，向 Services 层提供统一的 C 接口。�
 
 | 模块 | 头文件 | 职责 |
 |------|--------|------|
-| LCD | `periph_lcd.h` | 显示屏 |
+| LCD | `periph_lcd.h` | 显示屏 + LVGL display |
 | Touch | `periph_touch.h` | 触摸 |
-| Audio | `periph_audio.h` | 音频输入 / 输出 |
+| Audio | `periph_audio.h` | 音频播放 / 录音 |
 | IMU | `periph_imu.h` | 姿态传感器 |
 | Storage | `periph_storage.h` | TF 卡 + 内置 Flash |
-| Camera | `periph_camera.h` | 摄像头 |
+| Camera | `periph_camera.h` | 摄像头（GC0308 / GC2145） |
 | IO Expander | `periph_io_exp.h` | IO 扩展芯片 |
 | Button | `periph_button.h` | BOOT 按键 |
+| Ext | `periph_ext.h` | 外扩接口（GPIO / PWM / I2C / UART / ADC） |
 
 ## 3. periph_lcd
 
 ### 3.1 接口定义
 
 ```c
-typedef enum {
-    PERIPH_LCD_ROT_0 = 0,
-    PERIPH_LCD_ROT_90,
-    PERIPH_LCD_ROT_180,
-    PERIPH_LCD_ROT_270,
-} periph_lcd_rotation_t;
-
 /** 初始化 LCD + LVGL display */
 esp_err_t periph_lcd_init(void);
 
 /** 获取 LVGL display 对象（给 framework） */
-lv_disp_t *periph_lcd_get_disp(void);
+lv_display_t *periph_lcd_get_disp(void);
 
 /** 屏幕分辨率 */
 uint16_t periph_lcd_get_width(void);
@@ -51,9 +45,6 @@ uint8_t periph_lcd_get_brightness(void);
 /** 背光开关 */
 esp_err_t periph_lcd_set_backlight(bool on);
 
-/** 屏幕旋转 */
-esp_err_t periph_lcd_set_rotation(periph_lcd_rotation_t rot);
-
 /** 全屏颜色填充 */
 void periph_lcd_fill(uint16_t color);
 
@@ -64,11 +55,11 @@ esp_err_t periph_lcd_draw_bitmap(int x1, int y1, int x2, int y2, const uint16_t 
 ### 3.2 内部实现要点
 
 - LCD 面板、背光 PWM、IO 扩展的**硬件初始化由 Drivers 层 `bsp_init()` 完成**
-- `periph_lcd_init()` 取 `drv_st7789` 的 panel / io handle，调用 `lvgl_port_init()` + `lvgl_port_add_disp()` 集成 LVGL
-- 亮度持久化到 NVS namespace `sys`，key `brightness`
-- 默认配置：brightness=80
-- `periph_lcd_get_disp()` 返回 LVGL display，供 Touch / Framework 使用
-- 屏幕旋转：运行时切换 0° / 90° / 180° / 270°，触摸坐标同步旋转
+- `periph_lcd_init()` 取 `drv_st7789` 的 panel / io handle，调用 `lvgl_port_init()` 并注册 LVGL 显示（esp_lvgl_port 2.x，LVGL 9）
+- 亮度持久化到 NVS namespace `sys`，key `brightness`，默认 80
+- `periph_lcd_get_disp()` 返回 `lv_display_t`，供 Touch / Framework 使用
+- RGB565 字节交换在显示 flush 回调里处理（LVGL 9 已移除 `LV_COLOR_16_SWAP`）
+- flush 回调带错误处理：刷屏失败时补一次 `lv_display_flush_ready()`，避免单缓冲下 LVGL 死等
 
 ### 3.3 关键参数
 
@@ -76,10 +67,10 @@ esp_err_t periph_lcd_draw_bitmap(int x1, int y1, int x2, int y2, const uint16_t 
 |----|---|
 | 分辨率 | 320×240 |
 | 像素格式 | RGB565 |
-| 帧缓冲 | 10 行高 (10*320*2 = 6.4 KB)，位于内置 DMA 内存 |
+| 绘制缓冲 | 10 行高（320×10×2 = 6.4 KB），位于内置 DMA 内存 |
+| 缓冲模式 | 单缓冲 |
 | SPI 频率 | 80 MHz |
-| 默认旋转 | 0°（横屏，320 为水平方向） |
-| 背光 PWM | LEDC_CH0, 5 kHz, 10-bit |
+| 背光 PWM | LEDC CH0, 5 kHz, 10-bit |
 
 ## 4. periph_touch
 
@@ -90,19 +81,13 @@ typedef struct {
     uint16_t x;
     uint16_t y;
     bool pressed;
-    uint8_t touch_id;       // 触摸 ID（单点固定为 0）
 } periph_touch_point_t;
 
 typedef enum {
-    PERIPH_TOUCH_EVT_PRESS,
-    PERIPH_TOUCH_EVT_RELEASE,
-    PERIPH_TOUCH_EVT_TAP,         // 短按
-    PERIPH_TOUCH_EVT_DOUBLE_TAP,  // 双击
+    PERIPH_TOUCH_EVT_PRESS,       // 按下
+    PERIPH_TOUCH_EVT_RELEASE,     // 抬起
+    PERIPH_TOUCH_EVT_TAP,         // 点击
     PERIPH_TOUCH_EVT_LONG_PRESS,  // 长按
-    PERIPH_TOUCH_EVT_SWIPE_LEFT,
-    PERIPH_TOUCH_EVT_SWIPE_RIGHT,
-    PERIPH_TOUCH_EVT_SWIPE_UP,
-    PERIPH_TOUCH_EVT_SWIPE_DOWN,
 } periph_touch_evt_t;
 
 typedef void (*periph_touch_cb_t)(periph_touch_evt_t evt, const periph_touch_point_t *pt, void *user);
@@ -121,9 +106,8 @@ esp_err_t periph_touch_register_callback(periph_touch_cb_t cb, void *user);
 - 调用 `drv_ft6336_init()` 初始化触摸 IC
 - `periph_touch` 是触摸设备的**唯一轮询者**：创建 `touch_scan_task`（优先级 4，核心 0，10 ms 周期）读取坐标并缓存
 - 注册一个 LVGL POINTER input device，其 read_cb 只读取缓存，不访问硬件（避免并发读取丢点）
-- 手势回调在 `touch_scan_task` 上下文执行，**不可阻塞**
-- 单击 / 双击 / 长按通过按下-抬起-时间检测（双击窗口 300 ms）
-- 滑动手势通过起止坐标差检测（阈值 50 px）
+- 触摸回调在 `touch_scan_task` 上下文执行，**不可阻塞**
+- 点击 / 长按通过按下-抬起-时间检测（单击需在长按阈值内抬起）
 
 ## 5. periph_audio
 
@@ -146,7 +130,7 @@ typedef enum {
 
 typedef struct {
     periph_audio_sample_rate_t sample_rate;
-    uint8_t bit_width;        // 16, 24, 32
+    uint8_t bit_width;        // 16
     uint8_t channels;         // 1, 2
 } periph_audio_format_t;
 
@@ -159,7 +143,7 @@ esp_err_t periph_audio_set_format(periph_audio_dir_t dir, const periph_audio_for
 esp_err_t periph_audio_set_volume(uint8_t percent);
 uint8_t periph_audio_get_volume(void);
 
-/** 静音开关 */
+/** 静音开关（同时控制功放 PA_EN） */
 esp_err_t periph_audio_set_mute(bool mute);
 
 /** 写入 PCM 数据（播放方向） */
@@ -171,13 +155,12 @@ esp_err_t periph_audio_read(uint8_t *data, size_t len, size_t *bytes_read, uint3
 
 ### 5.2 内部实现要点
 
-- 调用 `drv_es8311_init()` + `drv_es7210_init()`
-- 调用 `drv_pca9557_set_pin()` 控制 PA_EN
-- 调用音频 codec 抽象库创建设备
-- I2S1 配置：MCLK = 384 × SR（16 kHz）/ 256 × SR（48 kHz），16-bit，Stereo
-- 内部创建 I2S TX/RX channel（共享时钟）
-- 音量映射：0-100 → ES8311 寄存器 0-100（线性）
-- 默认：48 kHz / 16-bit / 2ch（音乐），16 kHz / 16-bit / 2ch（录音）
+- 调用 `drv_es8311_init()`（DAC）+ `drv_es7210_init()`（ADC），两者都是 I2C 侧配置，I2S 数据通路在本模块
+- 调用 `drv_pca9557_set_pin()` 控制 PA_EN（静音时关闭功放）
+- I2S0：MCLK = 采样率 × 256，16-bit 立体声；发送用标准模式，接收用 TDM
+- 采样率：播放支持 8 / 16 / 22.05 / 32 / 44.1 / 48 kHz；录音（ES7210）限 16 / 44.1 / 48 kHz
+- 音量映射：0-100 → ES8311 寄存器（线性）
+- 默认：播放 48 kHz、录音 16 kHz，16-bit 立体声
 
 ## 6. periph_imu
 
@@ -187,44 +170,22 @@ esp_err_t periph_audio_read(uint8_t *data, size_t len, size_t *bytes_read, uint3
 typedef struct {
     float acc_x, acc_y, acc_z;     // m/s²
     float gyr_x, gyr_y, gyr_z;     // °/s
-    float roll, pitch, yaw;        // 角度
+    float roll, pitch, yaw;        // 由加速度推算的角度
 } periph_imu_data_t;
-
-typedef enum {
-    PERIPH_IMU_MOTION_NONE = 0,
-    PERIPH_IMU_MOTION_ANY = 0x20,
-    PERIPH_IMU_MOTION_NO = 0x40,
-    PERIPH_IMU_MOTION_SIGNIFICANT = 0x80,
-} periph_imu_motion_t;
 
 esp_err_t periph_imu_init(void);
 esp_err_t periph_imu_deinit(void);
 
 /** 同步读取最新数据 */
 esp_err_t periph_imu_read(periph_imu_data_t *out);
-
-/** 获取当前运动状态 */
-periph_imu_motion_t periph_imu_get_motion(void);
-
-/** 获取朝向（结合重力检测，用于屏幕旋转） */
-typedef enum {
-    PERIPH_IMU_ORIENTATION_PORTRAIT,
-    PERIPH_IMU_ORIENTATION_LANDSCAPE,
-    PERIPH_IMU_ORIENTATION_PORTRAIT_FLIP,
-    PERIPH_IMU_ORIENTATION_LANDSCAPE_FLIP,
-} periph_imu_orientation_t;
-
-periph_imu_orientation_t periph_imu_get_orientation(void);
 ```
 
 ### 6.2 内部实现要点
 
 - 调用 `drv_qmi8658_init()`
-- ACC: ±4g, 250 Hz, ODR
-- GYR: ±512 dps, 250 Hz, ODR
-- 创建 `imu_task`（优先级 3，核心 0，50 Hz 采样）
-- 计算欧拉角（基于加速度，简化算法）
-- 运动检测由 QMI8658 硬件中断或寄存器轮询
+- ACC ±4g / 250 Hz，GYR ±512 dps / 250 Hz
+- 采样任务由 `svc_imu` 负责（50 ms 周期）；periph_imu 只提供读取与角度换算
+- 姿态变化 / 摇晃 / 抬手的事件判定在 `svc_imu`
 
 ## 7. periph_storage
 
@@ -264,9 +225,8 @@ esp_err_t periph_storage_format(periph_storage_type_t type);
 
 ### 7.2 内部实现要点
 
-- TF 卡：`esp_vfs_fat_sdmmc_mount()` → `/sdcard`（SDMMC 1-bit）
-- 内置 Flash：`esp_vfs_spiffs_register()` → `/internal`（`storage` 分区，首次挂载失败时格式化；在 UI 之后挂载以不阻塞首屏）
-- 默认自动挂载 TF 卡（无卡时不报错）
+- TF 卡：`esp_vfs_fat_sdmmc_mount()` → `/sdcard`（SDMMC 1-bit，无卡时不报错）
+- 内置 Flash：`esp_vfs_spiffs_register()` → `/internal`（`storage` 分区，首次挂载失败时格式化；在首屏之后挂载以不阻塞启动）
 - 监控 TF 卡热插拔
 - 空间查询：`esp_vfs_fat_info()` / `esp_spiffs_info()`
 
@@ -281,9 +241,9 @@ typedef enum {
 } periph_camera_fmt_t;
 
 typedef enum {
-    PERIPH_CAMERA_RES_QQVGA = 0,   // 160x120
-    PERIPH_CAMERA_RES_QVGA,        // 320x240
-    PERIPH_CAMERA_RES_VGA,         // 640x480
+    PERIPH_CAMERA_RES_QVGA = 0,    // 320×240
+    PERIPH_CAMERA_RES_VGA,         // 640×480
+    PERIPH_CAMERA_RES_UXGA,        // 1600×1200（GC2145）
 } periph_camera_res_t;
 
 typedef struct {
@@ -297,18 +257,18 @@ typedef struct {
 esp_err_t periph_camera_init(periph_camera_fmt_t fmt, periph_camera_res_t res);
 esp_err_t periph_camera_deinit(void);
 
-/** 抓取一帧（同步） */
+/** 抓取一帧（同步），用完必须 release */
 esp_err_t periph_camera_capture(periph_camera_frame_t *frame);
 esp_err_t periph_camera_release_frame(periph_camera_frame_t *frame);
 ```
 
 ### 8.2 内部实现要点
 
-- 调用 `drv_gc0308_init()`
-- 调用 `drv_pca9557_set_dvp_pwdn()` 上电摄像头
-- 使用摄像头驱动抽象库
-- 帧缓冲放在 PSRAM
-- 默认 QVGA（320×240），JPEG 质量 12（软件编码）
+- 调用 `drv_camera_init()`（esp32-camera，按 PID 自动识别 GC0308 / GC2145）
+- 上电 / 掉电经 `drv_pca9557` 控制 DVP_PWDN
+- 帧缓冲放 PSRAM，2 帧
+- 默认 QVGA（320×240）RGB565，用于预览
+- 拍照由相机 App 把 RGB565 帧编码为 BMP 存 TF 卡
 
 ## 9. periph_io_exp
 
@@ -345,7 +305,6 @@ typedef enum {
     PERIPH_BTN_EVT_CLICK,
     PERIPH_BTN_EVT_DOUBLE_CLICK,
     PERIPH_BTN_EVT_LONG_PRESS,
-    PERIPH_BTN_EVT_VERY_LONG_PRESS,
 } periph_button_evt_t;
 
 typedef void (*periph_button_cb_t)(periph_button_evt_t evt, void *user);
@@ -356,11 +315,49 @@ esp_err_t periph_button_register_callback(periph_button_cb_t cb, void *user);
 
 ### 10.2 内部实现要点
 
-- 调用 `drv_key_init()` 配置 GPIO0 下降沿中断 + 内部上拉
-- 创建 `button_task` (优先级 4, 核心 0)
-- 区分单击 / 双击 / 长按通过按下时间 + 抬起后的延时
+- 调用 `drv_key_init()`：GPIO0 **任意边沿**中断 + 内部上拉
+- 驱动内部 `key_task`（优先级 4）做去抖与单击 / 双击 / 长按判定
+- 回调在 `key_task` 上下文执行
 
-## 11. Peripherals 初始化顺序
+## 11. periph_ext（外扩接口）
+
+### 11.1 接口定义
+
+外扩接口是 GH1.25 上引出的 GPIO10 / GPIO11，可复用为 GPIO / UART / PWM，并共用板上 I2C；ADC 取 GPIO10 / GPIO11。
+
+```c
+esp_err_t periph_ext_init(void);
+
+/** GPIO */
+esp_err_t periph_ext_gpio_write(uint8_t gpio, uint8_t level);
+int periph_ext_gpio_read(uint8_t gpio);
+
+/** PWM（LEDC，独立定时器 / 通道） */
+esp_err_t periph_ext_pwm_set(uint8_t gpio, uint32_t freq_hz, uint8_t duty_percent);
+esp_err_t periph_ext_pwm_stop(uint8_t gpio);
+
+/** ADC（返回值单位 mV） */
+esp_err_t periph_ext_adc_read(uint8_t gpio, int *out_mv);
+
+/** I2C（与板上 I2C0 共用总线，直接读写外部器件） */
+esp_err_t periph_ext_i2c_write(uint8_t addr, const uint8_t *data, size_t len);
+esp_err_t periph_ext_i2c_read(uint8_t addr, uint8_t *data, size_t len);
+
+/** UART（占用 GPIO10 / GPIO11） */
+esp_err_t periph_ext_uart_config(uint32_t baud, uint8_t data_bits, uint8_t parity, uint8_t stop_bits);
+esp_err_t periph_ext_uart_write(const uint8_t *data, size_t len, uint32_t timeout_ms);
+esp_err_t periph_ext_uart_read(uint8_t *data, size_t len, size_t *read_len, uint32_t timeout_ms);
+```
+
+### 11.2 内部实现要点
+
+- GPIO / PWM 用 `driver/gpio`、`driver/ledc`（PWM 用与背光不同的定时器 / 通道）
+- I2C 直接复用 `drv_i2c_bus_handle()`（临时挂载 / 摘除设备）
+- UART 用 `driver/uart` 的独立端口（不复用 UART0，UART0 留给下载与日志）
+- GPIO10 / GPIO11 同一时刻只能用于一种复用（UART 与 PWM 互斥）
+- CAN 未实现（外扩接口硬件支持，软件不做）
+
+## 12. Peripherals 初始化顺序
 
 `bsp_init()`（Drivers 层）由 `app_main()` 调用，之后调用 `peripherals_init_all()`：
 
@@ -372,23 +369,26 @@ esp_err_t peripherals_init_all(void) {
     ESP_ERROR_CHECK(periph_touch_init());     // 触摸（依赖 LCD display）
     periph_imu_init();                        // IMU（失败不阻塞启动）
     periph_storage_init();                    // 存储
-    periph_storage_mount(PERIPH_STORAGE_TF_CARD);       // 无卡仅告警
+    periph_storage_mount(PERIPH_STORAGE_TF_CARD);   // 无卡仅告警
     ESP_ERROR_CHECK(periph_button_init());    // 按键
+    periph_ext_init();                        // 外扩接口（失败不阻塞启动）
     return ESP_OK;
 }
 ```
 
-完整的启动序列（`app_main`）：`nvs_flash_init()` → `bsp_init()` → `peripherals_init_all()` → 创建 UI → `periph_storage_mount(PERIPH_STORAGE_INTERNAL_FLASH)`（首次自动格式化，放在 UI 之后以免阻塞首屏）。
+摄像头不在这里初始化（按需开关，由 `svc_camera` 控制）。
 
-## 12. 错误处理
+完整启动序列（`app_main`）：`nvs_flash_init()` → `bsp_init()` → `peripherals_init_all()` → 创建 UI → `periph_storage_mount(PERIPH_STORAGE_INTERNAL_FLASH)`（首次自动格式化，放在首屏之后以免阻塞）。
+
+## 13. 错误处理
 
 - Peripherals 函数失败时返回 `esp_err_t`
-- 关键路径（如 `periph_lcd_init`）调用者用 `ESP_ERROR_CHECK`
-- 非关键路径（如 `periph_camera_init` 在无摄像头时）允许 `ESP_FAIL` 返回，调用者记录日志
+- 关键路径（如 `periph_lcd_init`、`periph_touch_init`）调用者用 `ESP_ERROR_CHECK`
+- 非关键路径（如 `periph_audio_init`、`periph_camera_init` 无摄像头时）允许 `ESP_FAIL` 返回，调用者记录日志
 
-## 13. 资源使用约束
+## 14. 资源使用约束
 
-- **LVGL 帧缓冲**：内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
+- **LVGL 绘制缓冲**：内置 DMA 内存（SPI 驱动无法直接 DMA PSRAM，见 `AGENTS.md` 4.2）
 - **音频 buffer**：优先 PSRAM
 - **触摸 buffer**：内置 SRAM（实时性要求）
 - **IMU buffer**：内置 SRAM（实时性要求）

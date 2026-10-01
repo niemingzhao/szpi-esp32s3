@@ -13,25 +13,28 @@
         ▼
    [app_main()]
         │
-        ├─→ bsp_init()           // I2C, SPI, LEDC, PCA9557, LCD, Touch, Key, IMU
-        ├─→ peripherals_init_all() // IO, Audio, LCD(+LVGL), Touch, IMU, Storage, Button
+        ├─→ bsp_init()              // I2C, LEDC, PCA9557, LCD, Touch, Key, IMU
+        ├─→ peripherals_init_all()  // IO, Audio, LCD(+LVGL), Touch, IMU, Storage, Button, Ext
         │     │
-        │     └─→ periph_lcd_init() 内部 lvgl_port_init() + lvgl_port_add_disp()
+        │     └─→ periph_lcd_init() 内部初始化 LVGL 并注册显示
         │           periph_touch_init() 注册 LVGL input device
         │
-        ├─→ services_init()       // EventBus, Storage, Time, Audio, Net, Power, Noti
+        ├─→ services_init()         // Watchdog, EventBus, Settings, Storage, BT, Time,
+        │                           //   Audio, Net, Power, IMU, IO, Camera, SysInfo
+        │
+        ├─→ fw_init()               // Theme, Asset, Window, AppMgr, Script, UI, StatusBar, Input
+        │
+        ├─→ app_register_all()      // 注册所有内置 App
+        │
+        ├─→ fw_boot_animation()     // Logo + 提示音（约 1.35 s）
+        │
+        ├─→ fw_app_mgr_launch("Home")
         │     │
-        │     └─→ 启动各服务的内部任务
+        │     └─→ home_on_create() → 显示桌面
         │
-        ├─→ fw_init()            // Theme, Asset, Window, Input, StatusBar, CtrlCenter, NotiCenter, AppMgr
+        ├─→ periph_storage_mount(内置 Flash)   // 首屏之后挂载（首次格式化）
         │
-        ├─→ app_register_all()   // 注册所有 App
-        │
-        ├─→ fw_boot_animation()  // Logo 动画 1.5 s
-        │
-        └─→ fw_app_mgr_launch("Home")
-              │
-              └─→ home_on_create() → 显示桌面
+        └─→ svc_watchdog_arm()      // 打开超时自动重启
 ```
 
 ### 1.1 时间预算
@@ -40,10 +43,10 @@
 |------|----------|
 | `bsp_init` | < 200 ms |
 | `peripherals_init_all` | < 500 ms |
-| `services_init` | < 100 ms（启动后台任务） |
+| `services_init` | < 150 ms（含蓝牙初始化） |
 | `fw_init` | < 100 ms |
 | `app_register_all` | < 10 ms |
-| `fw_boot_animation` | 1500 ms |
+| `fw_boot_animation` | 约 1350 ms |
 | **总计到首屏** | **< 2.5 s** |
 
 ## 2. 触摸点击进入 App
@@ -52,12 +55,12 @@
 [FT6336 轮询检测到触摸]
         │
         ▼
-[esp_lcd_touch_read_data 读取坐标]
+[esp_lcd_touch 读取坐标]
         │
         ▼
-[periph_touch 扫描任务：读取 + 缓存 + 手势识别]
+[periph_touch 扫描任务：读取 + 缓存 + 点击 / 长按判定]
         │
-        ├─→ periph_touch 回调（PRESS / TAP / LONG_PRESS / SWIPE...）
+        ├─→ periph_touch 回调（PRESS / RELEASE / TAP / LONG_PRESS）
         │
         ▼
 [LVGL indev read_cb 读取缓存坐标]
@@ -66,328 +69,223 @@
 [LVGL input device 派发到当前屏]
         │
         ▼
-[桌面 lv_obj 处理事件]
-        │
-        ├─→ 点击了 "音乐" 图标
-        │
-        ▼
-[music_event_handler] (App 注册的 LVGL 事件回调)
+[桌面处理事件 → 点中 "音乐" 图标]
         │
         ▼
 [fw_app_mgr_launch("Music")]
         │
-        ├─→ 检查 Music 是否已存在
-        │     ├─ 是 → 调用 music_on_resume()
-        │     └─ 否 → 调用 music_on_create() → music_on_start()
+        ├─→ Music 是否已创建？
+        │     ├─ 是 → music_on_resume()
+        │     └─ 否 → music_on_create() → music_on_start()
         │
-        └─→ fw_window_switch_to(music_root, FADE_ON)
+        └─→ fw_window_switch_to(music_root, FADE_IN)
               │
-              └─→ 触发淡入动画，300 ms 后 Music 完全显示
+              └─→ 250 ms 淡入，Music 完全显示
 ```
 
-## 3. 音乐播放
+## 3. 运行脚本
+
+```
+[用户进入脚本管理器，选中一个脚本]
+        │
+        ▼
+[app_scripts 调用 fw_script_run(path)]
+        │
+        ▼
+[fw_script（script_task）加载 Lua 脚本]
+        │
+        ├─→ 脚本调用绑定：
+        │     ├─ 界面 / 输入 / 通知 → fw_ui / fw_input
+        │     ├─ 音频 / 摄像头 / 文件 / 网络 / BLE / 系统 → 各 Services
+        │     └─ GPIO / PWM / I2C / UART / ADC → svc_io
+        │
+        ├─→ 脚本运行中：定时器 / 事件回调在 script_task 上下文执行
+        │
+        └─→ 用户停止 或 脚本异常退出
+              │
+              ├─→ 释放脚本创建的界面对象、定时器、订阅
+              ├─→ 发布 SVC_EVENT_SCRIPT_STOPPED
+              └─→ 回到脚本管理器
+```
+
+## 4. 音乐播放
 
 ```
 [用户点击 "播放" 按钮]
         │
         ▼
-[music_app 中 btn_play_cb]
+[music App 中 btn_play_cb]
         │
         ▼
 [svc_audio_play(&src)]
         │
-        ├─→ svc_audio 内部 queue: 请求入队
+        ├─→ 请求入队
         │
         ▼
 [play_task 取出请求]
         │
-        ├─→ svc_storage_open("/sdcard/music/xxx.mp3")
+        ├─→ 打开文件（/sdcard/music/xxx.mp3）
         ├─→ helix MP3 解码器初始化
         ├─→ periph_audio_set_format(PLAY, ...)
-        ├─→ periph_audio_set_volume(current_vol)
         │
         ▼
 [play_task 循环]
         │
-        ├─→ 读取文件块 → 解码 → PCM 写入 periph_audio_write()
-        │                                       │
-        │                                       ▼
-        │                                  I2S1 TX → ES8311 → NS4150B → 喇叭
+        ├─→ 读文件块 → 解码 → PCM 写入 periph_audio_write()
+        │                                    │
+        │                                    ▼
+        │                              I2S0 TX → ES8311 → NS4150B → 喇叭
         │
-        └─→ 播放完成 → svc_audio_cb_t 回调 → SVC_EVENT_AUDIO_PLAYBACK_FINISHED
+        └─→ 播放完成 → 回调 → SVC_EVENT_AUDIO_PLAYBACK_FINISHED
               │
-              └─→ statusbar 监听 → 更新播放图标
+              └─→ 状态栏监听 → 更新播放图标
 ```
 
-## 4. Wi-Fi 连接
+## 5. Wi-Fi 连接
 
 ```
-[用户进入 Settings → Wi-Fi 设置]
+[用户进入 Wi-Fi App]
+        │
+        ├─→ svc_net_wifi_scan(...) → 显示 AP 列表
         │
         ▼
-[app_settings 进入 Wi-Fi 子页]
-        │
-        ├─→ svc_net_wifi_scan(...)
-        │     │
-        │     └─→ scan_task 执行扫描 (3-5 秒)
-        │
-        ▼
-[显示 AP 列表]
-        │
-        ├─→ 用户点击 "HomeWi-Fi"
-        │
-        ▼
-[弹出密码输入框]
-        │
-        ├─→ 用户输入密码
+[用户点击 "HomeWi-Fi" 并输入密码]
         │
         ▼
 [svc_net_wifi_connect(&creds)]
         │
-        ├─→ svc_net 内部：连接 Wi-Fi
-        │     │
-        │     └─→ ESP-IDF wifi 事件回调
+        ├─→ ESP-IDF Wi-Fi 事件回调
         │
-        ├─→ 失败 → SVC_EVENT_WIFI_CONNECT_FAILED → 设置页提示
+        ├─→ 失败 → SVC_EVENT_WIFI_CONNECT_FAILED → 界面提示
         │
         └─→ 成功 → SVC_EVENT_WIFI_CONNECTED
               │
               ├─→ svc_net_get_status() 获取 IP
               ├─→ svc_time_sync_ntp() 同步时间
-              ├─→ statusbar 更新 Wi-Fi 图标
-              └─→ svc_notification_post("Wi-Fi 已连接")
+              ├─→ 状态栏更新 Wi-Fi 图标
+              └─→ fw_ui_toast("Wi-Fi 已连接")
 ```
 
-## 5. 通知
+## 6. 摄像头拍照
 
 ```
-[任意地方调用 svc_notification_post(&noti)]
+[用户进入相机 App，点拍照]
         │
         ▼
-[svc_notification 内部：分配 ID，存入列表]
+[cam App 调用 svc_camera_open() / svc_camera_capture(...)]
         │
-        ├─→ 立即在屏幕底部弹出 toast（默认 3 秒后消失）
+        ├─→ drv_camera（esp32-camera）取一帧 RGB565（PSRAM）
         │
-        └─→ 发布 SVC_EVENT_NOTIFICATION_POSTED
-              │
-              ├─→ statusbar 更新通知图标（红点）
-              │
-              └─→ fw_notification 监听 → 在通知中心列表中显示
-                    │
-                    └─→ 点状态栏"通知"按钮 → 显示通知中心
-                          │
-                          ├─→ 用户点击通知 → 调用 noti.on_click()
-                          │     │
-                          │     └─→ 通常是 fw_app_mgr_launch(noti.target_app)
-                          │
-                          └─→ 用户点"清空" → svc_notification_clear_all()
-                                │
-                                └─→ SVC_EVENT_NOTIFICATION_DISMISSED
-                                      │
-                                      └─→ fw_notification 移除该条目
+        ▼
+[cam App 把帧编码为 BMP]
+        │
+        ▼
+[svc_storage_write("/sdcard/DCIM/IMG_xxx.bmp", data, len)]
+        │
+        ▼
+[svc_camera_release(buf)]
+        │
+        ▼
+[fw_ui_toast("已保存到 DCIM")]
 ```
 
-## 6. 锁屏超时 → 唤醒
+拍照期间预览暂停；GC0308 / GC2145 由 esp32-camera 按 PID 自动识别。
+
+## 7. 屏幕超时熄屏 → 唤醒
 
 ```
 [power_task 每秒检查]
         │
-        ├─→ 上次触摸后已过 N 秒？
+        ├─→ 距上次触摸已过 N 秒？
         │     │
         │     └─→ 是 → svc_power_sleep()
         │              │
-        │              ├─→ periph_lcd_set_backlight(false)
-        │              └─→ periph_imu_deinit()（省电）
+        │              └─→ periph_lcd_set_backlight(false)（只关背光，LCD 保持）
         │
         ▼
-[下次触摸发生]
+[触摸 / 按键 / 晃动发生]
         │
-        ├─→ periph_touch 扫描任务
-        │     │
-        │     └─→ svc_event_bus_publish(SVC_EVENT_TOUCH, ...)
+        ├─→ 触摸 → SVC_EVENT_TOUCH
+        │     按键 → fw_input 回调
+        │     晃动 → SVC_EVENT_IMU_*
         │           │
         │           └─→ svc_power 监听 → svc_power_wake()
         │                 │
-        │                 ├─→ periph_lcd_set_backlight(true)
-        │                 └─→ periph_imu_init()
+        │                 └─→ periph_lcd_set_backlight(true)
         │
-        └─→ svc_power 重置 timeout 计数
+        └─→ svc_power 重置超时计数
 ```
 
-## 7. 电源菜单（长按 BOOT）
+## 8. 电源菜单（长按 BOOT）
 
 ```
-[BOOT 按键 1.5 s+]
+[BOOT 按键长按 1.5 s+]
         │
         ▼
 [periph_button 任务检测 LONG_PRESS]
         │
         ▼
-[fw_input 全局回调 → show_power_menu()（fw_input 内部静态函数）]
+[fw_input 全局回调 → 弹出电源菜单浮层]
         │
-        ▼
-[LVGL 弹出 power menu 浮层]
-        │
-        ├─→ [关机]
-        │     └─→ svc_power_request_shutdown() → deep sleep
-        ├─→ [重启]
-        │     └─→ svc_power_request_reboot() → esp_restart()
-        └─→ [取消]
-              └─→ 关闭浮层
+        ├─→ [重启] → svc_power_request_reboot() → esp_restart()
+        ├─→ [关机] → svc_power_request_shutdown() → 熄屏待机
+        └─→ [取消] → 关闭浮层
 ```
 
-## 8. OTA 升级
-
-```
-[用户进入 Settings → 系统更新]
-        │
-        ▼
-[app_ota 调用 svc_ota_check_and_update(url)]
-        │
-        ├─→ 通过 HTTPS GET 检查版本
-        │     │
-        │     ├─→ 当前是最新 → 显示"已是最新"
-        │     └─→ 有新版本 → 显示对话框 [下载更新]
-        │
-        ├─→ 用户确认 → 下载固件到 OTA 分区
-        │     │
-        │     └─→ 下载进度 → svc_notification_post("更新中...")
-        │
-        ├─→ 下载完成 → esp_restart() 进入新固件
-        │     │
-        │     └─→ 新固件启动 → 检查上次 OTA 状态
-        │           │
-        │           ├─→ 成功 → 删除旧固件，发送 notification
-        │           └─→ 失败 → 回滚到旧固件，发送 notification
-        │
-        └─→ 升级失败 → 回滚 + notification 提示
-```
-
-## 9. 摄像头拍照
-
-```
-[用户进入 Camera App，按下拍照]
-        │
-        ▼
-[cam_app 调用 periph_camera_capture(&frame)]
-        │
-        ├─→ drv_gc0308_grab_frame()
-        │     │
-        │     └─→ esp_camera_fb_get()  (DVP → PSRAM)
-        │
-        ▼
-[cam_app 转换/编码 JPEG]
-        │
-        ├─→ frame2jpg() → JPEG 数据
-        │
-        ▼
-[svc_storage 写 TF 卡]
-        │
-        ├─→ fopen("/sdcard/DCIM/IMG_20260927_103000.jpg", "wb")
-        ├─→ fwrite(jpeg_data, ...)
-        └─→ fclose()
-        │
-        ▼
-[periph_camera_release_frame(&frame)]
-        │
-        ▼
-[svc_notification_post("已保存到 DCIM")]
-```
-
-## 10. 语音唤醒（Phase 3）
-
-```
-[mic_task 持续从 I2S 读取 PCM (16 kHz)]
-        │
-        ▼
-[本地语音识别引擎处理]
-        │
-        ├─→ VAD 检测
-        │
-        └─→ 本地唤醒词模型
-              │
-              └─→ 检测到 "你好小智" 唤醒词
-                    │
-                    ▼
-              [切换到命令词识别]
-                    │
-                    ├─→ "播放音乐" → svc_audio_play(...)
-                    ├─→ "暂停" → svc_audio_pause()
-                    ├─→ "下一首" → svc_audio_next()
-                    └─→ "打开设置" → fw_app_mgr_launch("Settings")
-```
-
-## 11. 多任务切换
-
-```
-[用户从 App A 长按 HOME 键]
-        │
-        ▼
-[fw_app_mgr 弹出最近应用列表]
-        │
-        ▼
-[用户选择 App B]
-        │
-        ▼
-[fw_app_mgr_back_to_app(B)]
-        │
-        ├─→ A: on_pause() （A 进入后台，资源保留）
-        ├─→ B: on_resume() （B 从后台恢复）
-        └─→ 显示切换动画
-```
-
-## 12. 性能预算汇总
+## 9. 性能预算汇总
 
 | 场景 | 目标 |
 |------|------|
 | 开机到首屏 | < 2.5 s |
 | App 切换 | < 500 ms |
+| 脚本启动 | < 500 ms |
 | 触摸响应 | < 100 ms |
 | Wi-Fi 连接（已知） | < 5 s |
 | 拍照保存 | < 1 s |
 | MP3 启动 | < 300 ms |
 | UI 帧率 | ≥ 30 FPS |
 
-## 13. 关键路径与瓶颈
+## 10. 关键路径与瓶颈
 
-### 13.1 关键路径（必须流畅）
+### 10.1 关键路径（必须流畅）
 
-- **触摸 → UI**：FT6336 → LVGL input device → 当前屏事件回调
-- **音频播放**：play_task → 解码 → I2S → ES8311
+- **触摸 → UI**：FT6336 → periph_touch 缓存 → LVGL input device → 当前界面事件回调
+- **音频播放**：play_task → 解码 → I2S0 → ES8311
 - **显示刷新**：LVGL tick → render → LCD
 
-### 13.2 潜在瓶颈
+### 10.2 潜在瓶颈
 
-- **SRAM**：512 KB 内置，任务栈 + LVGL 控制块紧张
-- **PSRAM**：8 MB，图片 / 视频 / 音频缓冲占大头
+- **SRAM**：512 KB 内置，任务栈 + LVGL + 蓝牙占用紧张
+- **PSRAM**：8 MB，图片 / 音频 / 摄像头缓冲占大头
 - **音频 + UI 同时**：核心 1 跑音频解码，核心 0 跑 LVGL，互不干扰
+- **脚本**：单个脚本的运行内存要控制，避免挤占内部 RAM
 
-## 14. 数据流图（综合）
+## 11. 数据流图（综合）
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ 用户交互（触摸 / 按键 / IMU）                        │
+│ 用户交互（触摸 / 按键 / IMU）                          │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ Drivers（硬件读写）                                  │
+│ Drivers（硬件读写）                                    │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ Peripherals（业务语义封装）                          │
+│ Peripherals（业务语义封装）                            │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ Services（事件总线 / 业务逻辑）                       │
+│ Services（事件总线 / 业务逻辑）                        │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ Framework（LVGL 封装 / 窗口 / 应用管理）              │
+│ Framework（LVGL 封装 / 窗口 / App 管理 / 脚本运行时）  │
 └─────┬────────────────────────────────────────────────┘
       ▼
 ┌──────────────────────────────────────────────────────┐
-│ Apps（具体业务：时钟 / 音乐 / 设置等）                │
+│ Apps / 脚本（具体业务）                                │
 └──────────────────────────────────────────────────────┘
 ```
 
-每一层通过事件总线（svc_event_bus）跨层通信，避免直接跨层调用。
+每一层通过事件总线（`svc_event_bus`）跨层通信，避免直接跨层调用。

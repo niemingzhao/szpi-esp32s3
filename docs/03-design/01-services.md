@@ -9,19 +9,18 @@ Services 层提供跨多个 Peripherals 的业务服务，处理协议、状态�
 | Event Bus | `svc_event_bus.h` | 系统事件分发 |
 | Settings | `svc_settings.h` | 配置持久化（NVS，含 blob） |
 | Storage | `svc_storage.h` | 文件系统抽象、TF 热插拔 |
-| Time | `svc_time.h` | SNTP 同步、时区 |
+| Time | `svc_time.h` | 时间、时区、SNTP |
 | Audio | `svc_audio.h` | 音乐 / 录音 / 提示音 |
-| Network | `svc_net.h` | Wi-Fi 状态机、HTTP 客户端、配网 |
-| Bluetooth | `svc_bt.h` | BLE 广播、GATT 从机、扫描 |
+| Network | `svc_net.h` | Wi-Fi 状态机、HTTP(S)、配网 |
+| Bluetooth | `svc_bt.h` | BLE 广播、扫描、GATT 从机、HID 模拟 |
 | MQTT | `svc_mqtt.h` | MQTT 客户端 |
 | WebSocket | `svc_ws.h` | WebSocket 客户端 |
-| OTA | `svc_ota.h` | HTTPS 升级 |
-| Notification | `svc_notification.h` | 通知队列、UI 路由 |
-| Power | `svc_power.h` | 电源管理、背光、唤醒 |
-| IMU | `svc_imu.h` | 运动 / 姿态事件 |
+| IO | `svc_io.h` | 外扩 GPIO / PWM / I2C / UART / ADC |
+| Camera | `svc_camera.h` | 摄像头（把 esp32-camera 挡在服务内） |
+| Power | `svc_power.h` | 背光、熄屏、唤醒、关机 / 重启 |
+| IMU | `svc_imu.h` | 姿态采样与运动事件 |
 | Watchdog | `svc_watchdog.h` | Task Watchdog |
-| System Info | `svc_sysinfo.h` | 系统信息查询 |
-| Shell | `svc_shell.h` | 串口命令行 |
+| System Info | `svc_sysinfo.h` | 系统信息、崩溃记录 |
 
 ## 2. svc_event_bus（事件总线）
 
@@ -37,52 +36,47 @@ Services 层提供跨多个 Peripherals 的业务服务，处理协议、状态�
 typedef enum {
     SVC_EVENT_BASE = 0,
 
-    // 存储事件
+    // 存储
     SVC_EVENT_SD_MOUNTED,
     SVC_EVENT_SD_UNMOUNTED,
-    SVC_EVENT_SD_ERROR,
 
-    // 网络事件
-    SVC_EVENT_WIFI_SCAN_STARTED,
-    SVC_EVENT_WIFI_SCAN_DONE,
+    // 网络
     SVC_EVENT_WIFI_CONNECTING,
     SVC_EVENT_WIFI_CONNECTED,
     SVC_EVENT_WIFI_DISCONNECTED,
     SVC_EVENT_WIFI_CONNECT_FAILED,
 
-    // 时间事件
+    // 蓝牙
+    SVC_EVENT_BT_STATE_CHANGED,
+    SVC_EVENT_BT_SCAN_DONE,
+
+    // 时间
     SVC_EVENT_TIME_SYNCED,
-    SVC_EVENT_TIME_CHANGED,         // 每分钟
+    SVC_EVENT_TIME_CHANGED,
     SVC_EVENT_TIMEZONE_CHANGED,
 
-    // 主题 / 语言事件
+    // 主题
     SVC_EVENT_THEME_CHANGED,
-    SVC_EVENT_LANGUAGE_CHANGED,
 
-    // 电源 / 输入事件
+    // 电源
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
-    SVC_EVENT_SHUTDOWN_REQUEST,
 
-    // 手势事件
-    SVC_EVENT_GESTURE_SWIPE_LEFT,
-    SVC_EVENT_GESTURE_SWIPE_RIGHT,
-    SVC_EVENT_GESTURE_SWIPE_UP,
-    SVC_EVENT_GESTURE_SWIPE_DOWN,
+    // IMU
+    SVC_EVENT_IMU_MOTION,
+    SVC_EVENT_IMU_ORIENTATION,
 
-    // 音频事件
+    // 音频
     SVC_EVENT_AUDIO_PLAYBACK_STARTED,
     SVC_EVENT_AUDIO_PLAYBACK_FINISHED,
     SVC_EVENT_AUDIO_PLAYBACK_ERROR,
     SVC_EVENT_AUDIO_RECORD_STARTED,
     SVC_EVENT_AUDIO_RECORD_FINISHED,
 
-    // 通知事件
-    SVC_EVENT_NOTIFICATION_POSTED,
-    SVC_EVENT_NOTIFICATION_DISMISSED,
-    SVC_EVENT_NOTIFICATION_CLICKED,
+    // 脚本
+    SVC_EVENT_SCRIPT_STARTED,
+    SVC_EVENT_SCRIPT_STOPPED,
 
-    // 用户事件
     SVC_EVENT_USER_BASE = 0x8000,
 } svc_event_id_t;
 
@@ -108,56 +102,95 @@ esp_err_t svc_event_bus_publish_from_isr(svc_event_id_t id, void *data, uint32_t
 - 单条事件负载超过 `SVC_EVENT_DATA_MAX` 会截断并记日志
 - 订阅者回调里不要长时间阻塞；订阅 / 退订只在初始化或 App 生命周期回调里做
 
-## 3. svc_time（时间服务）
+## 3. svc_settings（配置服务）
 
-### 3.1 职责
+```c
+esp_err_t svc_settings_init(void);
+esp_err_t svc_settings_set_i32(const char *ns, const char *key, int32_t val);
+esp_err_t svc_settings_get_i32(const char *ns, const char *key, int32_t *val, int32_t def);
+esp_err_t svc_settings_set_u32(const char *ns, const char *key, uint32_t val);
+esp_err_t svc_settings_get_u32(const char *ns, const char *key, uint32_t *val, uint32_t def);
+esp_err_t svc_settings_set_str(const char *ns, const char *key, const char *val);
+esp_err_t svc_settings_get_str(const char *ns, const char *key, char *buf, size_t len, const char *def);
+esp_err_t svc_settings_set_blob(const char *ns, const char *key, const void *data, size_t len);
+esp_err_t svc_settings_get_blob(const char *ns, const char *key, void *buf, size_t *len);
+```
 
-- SNTP 同步
-- 时区管理
-- 提供格式化时间 API
+- 命名空间：`sys`、`wifi`、`script`、`app_<name>`
+- 设置变化发布对应的 `SVC_EVENT_*_CHANGED` 事件（如亮度、时区、主题）
+- 所有读写走 NVS，进程内不缓存
 
-### 3.2 接口
+## 4. svc_storage（存储服务）
+
+```c
+esp_err_t svc_storage_init(void);
+
+esp_err_t svc_storage_get_path(periph_storage_type_t type, char *buf, size_t len);
+// 填入 "/sdcard" 或 "/internal"
+
+esp_err_t svc_storage_app_dir(const char *app_name, char *buf, size_t len);
+// 返回 /internal/apps/<app_name>（不带结尾斜杠）
+
+esp_err_t svc_storage_mkdir(const char *path);
+esp_err_t svc_storage_rmdir(const char *path);
+
+/* 整块读写（读上限 1 MB，返回的缓冲由调用方 free） */
+esp_err_t svc_storage_read(const char *path, void **out_buf, size_t *out_len);
+esp_err_t svc_storage_write(const char *path, const void *data, size_t len);
+esp_err_t svc_storage_remove(const char *path);
+esp_err_t svc_storage_exists(const char *path, size_t *out_size);
+
+/* 目录迭代：iter_next 返回内部缓冲，用完必须马上拷贝 */
+typedef struct {
+    char name[256];
+    bool is_dir;
+    size_t size;
+} svc_storage_entry_t;
+typedef void *svc_storage_iter_t;
+esp_err_t svc_storage_iter_start(const char *dir, svc_storage_iter_t *iter);
+svc_storage_entry_t *svc_storage_iter_next(svc_storage_iter_t iter);
+void svc_storage_iter_end(svc_storage_iter_t iter);
+
+esp_err_t svc_storage_format(periph_storage_type_t type);
+```
+
+- 挂载 / 卸载与热插拔委托 `periph_storage`，本层负责路径与 App 目录约定
+- TF 卡热插拔由 `sd_monitor_task` 检测，挂载 / 卸载后发布 `SVC_EVENT_SD_*`
+
+## 5. svc_time（时间服务）
 
 ```c
 esp_err_t svc_time_init(void);
 
 esp_err_t svc_time_sync_ntp(void);
-esp_err_t svc_time_set_timezone(const char *tz);  // "CST-8" 或 "Asia/Shanghai"
+esp_err_t svc_time_set_timezone(const char *tz);   // "CST-8"
+esp_err_t svc_time_set_manual(int64_t ts);
 
 bool svc_time_is_synced(void);
+int64_t svc_time_now(void);                        // epoch 秒
 
-/** 获取 epoch 秒 */
-int64_t svc_time_now(void);
-
-/** 格式化 */
 esp_err_t svc_time_format(int64_t ts, const char *fmt, char *buf, size_t len);
-// fmt 同 strftime: "%H:%M", "%Y-%m-%d %H:%M:%S", ...
-
-esp_err_t svc_time_set_manual(int64_t ts);
+// fmt 同 strftime："%H:%M"、"%-m月%-d日" 等
 ```
 
-### 3.3 实现要点
-
-- `ntp_task` (优先级 2, 核心 0) 每 6 小时同步一次
-- 同步成功后发布 `SVC_EVENT_TIME_SYNCED`
-- 每分钟发送 `SVC_EVENT_TIME_CHANGED`
+- `ntp_sync_task`（优先级 2，核心 0）每 6 小时同步一次，成功后发布 `SVC_EVENT_TIME_SYNCED`
+- 每分钟发布 `SVC_EVENT_TIME_CHANGED`
 - 用 `esp_netif_sntp` + `esp_sntp`
 
-## 4. svc_audio（音频服务）
+## 6. svc_audio（音频服务）
 
-### 4.1 职责
+### 6.1 职责
 
 - 音乐播放：MP3 / WAV
 - 录音：WAV 写入 TF 卡
 - 提示音（tone）：短促蜂鸣
-- 音量控制
+- 音量与静音
 
-### 4.2 接口
+### 6.2 接口
 
 ```c
 typedef enum {
     SVC_AUDIO_SRC_FILE,     // 文件路径
-    SVC_AUDIO_SRC_URL,      // HTTP URL
     SVC_AUDIO_SRC_TONE,     // 简单 tone
     SVC_AUDIO_SRC_STREAM,   // 外部 PCM 流
 } svc_audio_src_type_t;
@@ -217,7 +250,7 @@ esp_err_t svc_audio_register_callback(svc_audio_cb_t cb, void *user);
 esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 ```
 
-### 4.3 任务架构
+### 6.3 任务架构
 
 ```
                 ┌────────────────┐
@@ -225,41 +258,40 @@ esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
                 └───────┬────────┘
                         ▼
                 ┌────────────────┐   play_task 优先级 6, 核心 1, 栈 8 KB
-                │  play_task     │   解码 (helix MP3 / wav)
+                │  play_task     │   解码 (helix MP3 / WAV)
                 │  状态机        │   写入 I2S
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   rec_task 优先级 5, 核心 1, 栈 4 KB
+                ┌────────────────┐   rec_task（录音时启用）
                 │  rec_task      │   读取 I2S
-                │  (录音时启用)  │   写 WAV 头 + PCM
+                │                │   写 WAV 头 + PCM
                 └───────┬────────┘
                         ▼
-                ┌────────────────┐   tone_task 优先级 4, 核心 1, 栈 2 KB
+                ┌────────────────┐   tone_task
                 │  tone_task     │   短 tone 临时覆盖
                 │  (提示音)      │
                 └────────────────┘
 ```
 
-### 4.4 实现要点
+### 6.4 实现要点
 
-- 使用 esp-audio-player 作为高层播放 API
-- 使用 helix MP3 解码器
-- 状态通过互斥锁保护
-- 异步回调通过 `xQueueSend` 投递到 `play_task` 处理
-- tone 实现：用一个临时 PCM 流任务，频率控制由正弦波生成器
+- MP3 用 helix 解码器；WAV 直接读 PCM
+- 文件读取经 `svc_storage` 的路径，数据经 VFS 直接读
+- 播放状态由互斥锁保护，事件回调经队列投递到 play_task
+- tone 用正弦波生成器临时占用播放通路，播完恢复
 
-## 5. svc_net（网络服务）
+## 7. svc_net（网络服务）
 
-### 5.1 职责
+### 7.1 职责
 
-- Wi-Fi 状态机（连接、断开、重连）
-- HTTP 客户端
-- SmartConfig / AP-Web 配网
-- SNTP 时间同步（注册到 svc_time）
-- 蓝牙 BLE 由独立服务 `svc_bt` 提供（广播 / GATT 从机 / 扫描）
-- MQTT 客户端由 `svc_mqtt`、WebSocket 客户端由 `svc_ws`、OTA 升级由 `svc_ota` 提供
+- Wi-Fi 状态机（扫描、连接、断开、重连）
+- Web 配网 / SmartConfig
+- HTTP(S) 客户端
+- SNTP 时间同步（委托 `svc_time`）
 
-### 5.2 接口
+蓝牙 / MQTT / WebSocket 分别由 `svc_bt` / `svc_mqtt` / `svc_ws` 提供。
+
+### 7.2 接口
 
 ```c
 typedef enum {
@@ -280,166 +312,100 @@ typedef struct {
     uint8_t auth_mode;
 } svc_net_wifi_ap_t;
 
-esp_err_t svc_net_init(void);
-
-/** 启动 Wi-Fi */
-esp_err_t svc_net_wifi_start(svc_net_mode_t mode);
-esp_err_t svc_net_wifi_stop(void);
-
-/** 扫描 AP */
-esp_err_t svc_net_wifi_scan(svc_net_wifi_ap_t *aps, size_t max_aps, size_t *found, uint32_t timeout_ms);
-
-/** 连接（已知 SSID） */
-esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds);
-esp_err_t svc_net_wifi_disconnect(void);
-
-/** 获取已保存的凭据并尝试自动连接 */
-esp_err_t svc_net_wifi_auto_connect(void);
-
-/** 清除已保存的凭据并断开 / 关闭 Wi-Fi */
-esp_err_t svc_net_wifi_forget(void);
-
-/** 读取已保存的 SSID（无则返回 ESP_ERR_NOT_FOUND） */
-esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len);
-
-/** SmartConfig 配网 */
-esp_err_t svc_net_smartconfig_start(void);
-esp_err_t svc_net_smartconfig_stop(void);
-
-/** 状态查询 */
 typedef struct {
     bool wifi_connected;
     char wifi_ssid[33];
     char ip_addr[16];
     int8_t rssi;
 } svc_net_status_t;
+
+esp_err_t svc_net_init(void);
+
+esp_err_t svc_net_wifi_start(svc_net_mode_t mode);
+esp_err_t svc_net_wifi_stop(void);
+esp_err_t svc_net_wifi_scan(svc_net_wifi_ap_t *aps, size_t max_aps, size_t *found, uint32_t timeout_ms);
+esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds);
+esp_err_t svc_net_wifi_disconnect(void);
+esp_err_t svc_net_wifi_auto_connect(void);
+esp_err_t svc_net_wifi_forget(void);
+esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len);
 esp_err_t svc_net_get_status(svc_net_status_t *status);
 
-/** HTTP 客户端 */
+esp_err_t svc_net_smartconfig_start(void);
+esp_err_t svc_net_smartconfig_stop(void);
+
 esp_err_t svc_http_get(const char *url, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
 esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_t buf_len, uint32_t timeout_ms);
+```
 
-/** MQTT */
+### 7.3 实现要点
+
+- Wi-Fi / IP 事件由 `esp_event` 默认事件循环任务处理，回调中发布 `SVC_EVENT_WIFI_*`
+- 保存一份凭据到 NVS，支持自动重连；连接失败重试若干次后停止并发布 `SVC_EVENT_WIFI_CONNECT_FAILED`
+- 开启 PMF capable（兼容 WPA3）
+- HTTP 客户端用 `esp_http_client`，HTTPS 走 mbedTLS
+
+## 8. svc_bt（蓝牙服务）
+
+```c
+typedef enum {
+    SVC_BT_STATE_OFF,
+    SVC_BT_STATE_READY,
+    SVC_BT_STATE_ADVERTISING,
+    SVC_BT_STATE_CONNECTED,
+} svc_bt_state_t;
+
+esp_err_t svc_bt_init(void);          // 必须在 Wi-Fi 之前初始化（AGENTS 4.6）
+svc_bt_state_t svc_bt_get_state(void);
+esp_err_t svc_bt_adv_start(void);
+esp_err_t svc_bt_adv_stop(void);
+esp_err_t svc_bt_scan_start(void);
+esp_err_t svc_bt_scan_stop(void);
+esp_err_t svc_bt_hid_send_key(uint8_t keycode);
+esp_err_t svc_bt_hid_send_mouse(int8_t dx, int8_t dy, uint8_t buttons);
+```
+
+- 仅 BLE 4.2，Bluedroid；控制器活动实例数保持 IDF 默认
+- 事件发布 `SVC_EVENT_BT_STATE_CHANGED` / `SVC_EVENT_BT_SCAN_DONE`
+- HID 报告要等配对完成后才能发
+
+## 9. svc_mqtt / svc_ws / svc_io / svc_camera
+
+```c
+/* svc_mqtt */
 esp_err_t svc_mqtt_connect(const char *uri, const char *username, const char *password);
 esp_err_t svc_mqtt_publish(const char *topic, const char *payload, int qos);
 esp_err_t svc_mqtt_subscribe(const char *topic, int qos, void (*cb)(const char *topic, const char *payload));
 esp_err_t svc_mqtt_disconnect(void);
 
-/** WebSocket */
+/* svc_ws */
 esp_err_t svc_ws_connect(const char *uri, void (*cb)(const char *data, size_t len));
 esp_err_t svc_ws_send(const char *data, size_t len);
 esp_err_t svc_ws_disconnect(void);
 
-/** OTA */
-esp_err_t svc_ota_check_and_update(const char *url);
+/* svc_io：外扩硬件能力，供脚本与 App 使用 */
+esp_err_t svc_io_gpio_write(uint8_t gpio, uint8_t level);
+int svc_io_gpio_read(uint8_t gpio);
+esp_err_t svc_io_pwm_set(uint8_t gpio, uint32_t freq_hz, uint8_t duty_percent);
+esp_err_t svc_io_adc_read(uint8_t gpio, int *out_mv);
+esp_err_t svc_io_i2c_write(uint8_t addr, const uint8_t *data, size_t len);
+esp_err_t svc_io_i2c_read(uint8_t addr, uint8_t *data, size_t len);
+esp_err_t svc_io_uart_config(uint32_t baud, uint8_t data_bits, uint8_t parity, uint8_t stop_bits);
+esp_err_t svc_io_uart_write(const uint8_t *data, size_t len, uint32_t timeout_ms);
+esp_err_t svc_io_uart_read(uint8_t *data, size_t len, size_t *read_len, uint32_t timeout_ms);
+
+/* svc_camera：封装 esp32-camera，App / 脚本不直接依赖该组件 */
+esp_err_t svc_camera_open(void);
+esp_err_t svc_camera_close(void);
+bool svc_camera_is_open(void);
+esp_err_t svc_camera_capture(void **out_buf, size_t *out_len, uint16_t *w, uint16_t *h, bool jpeg);
+void svc_camera_release(void *buf);
 ```
 
-### 5.3 实现要点
+- `svc_io` 与 `svc_camera` 是薄封装，直接转发到 `periph_ext` / `periph_camera`
+- MQTT / WebSocket 使用各自托管组件
 
-- Wi-Fi / IP 事件由 `esp_event` 默认事件循环任务处理，回调中发布 `SVC_EVENT_WIFI_*` 事件
-- 默认保存一份 Wi-Fi 凭据到 NVS，自动连接
-- 连接失败自动重试（最多 5 次），超限后停止并发布 `SVC_EVENT_WIFI_CONNECT_FAILED`
-- 开启 PMF capable（兼容 WPA3），`sae_pwe_h2e` 用 `WPA3_SAE_PWE_BOTH`
-- HTTP 客户端用 `esp_http_client`
-- MQTT 用 `mqtt`
-- WebSocket 用 `esp_websocket_client`
-- OTA 用 `esp_https_ota`，带 HTTPS 校验
-
-## 6. svc_storage（存储服务）
-
-### 6.1 职责
-
-- 挂载 / 卸载 TF 卡 + 内置 Flash
-- 提供统一路径管理
-- 应用沙箱目录
-- 文件浏览辅助
-
-### 6.2 接口
-
-```c
-esp_err_t svc_storage_init(void);
-
-esp_err_t svc_storage_get_path(periph_storage_type_t type, char *buf, size_t len);
-// 填入 "/sdcard" 或 "/internal"
-
-esp_err_t svc_storage_app_dir(const char *app_name, char *buf, size_t len);
-// 返回 /internal/apps/<app_name>（不带结尾斜杠）
-
-esp_err_t svc_storage_mkdir(const char *path);
-esp_err_t svc_storage_rmdir(const char *path);
-
-/** 列出目录内容（迭代器） */
-typedef struct {
-    char name[256];
-    bool is_dir;
-    size_t size;
-} svc_storage_entry_t;
-
-typedef void *svc_storage_iter_t;
-esp_err_t svc_storage_iter_start(const char *dir, svc_storage_iter_t *iter);
-svc_storage_entry_t *svc_storage_iter_next(svc_storage_iter_t iter);
-void svc_storage_iter_end(svc_storage_iter_t iter);
-```
-
-## 7. svc_notification（通知服务）
-
-### 7.1 职责
-
-- 通知队列
-- 通知显示（通过 framework 注册）
-- 通知点击回调
-
-### 7.2 接口
-
-```c
-typedef enum {
-    SVC_NOTI_TYPE_INFO,
-    SVC_NOTI_TYPE_WARN,
-    SVC_NOTI_TYPE_ERROR,
-    SVC_NOTI_TYPE_SUCCESS,
-    SVC_NOTI_TYPE_PROGRESS,
-} svc_noti_type_t;
-
-typedef void (*svc_noti_click_cb_t)(uint32_t noti_id, void *user_data);
-
-typedef struct {
-    uint32_t id;
-    svc_noti_type_t type;
-    const char *icon_src;
-    const char *title;
-    const char *message;
-    uint32_t timestamp;
-    bool auto_dismiss_ms;
-    void *user_data;
-    svc_noti_click_cb_t on_click;
-} svc_notification_t;
-
-esp_err_t svc_notification_init(void);
-
-esp_err_t svc_notification_post(const svc_notification_t *noti);
-esp_err_t svc_notification_dismiss(uint32_t noti_id);
-esp_err_t svc_notification_clear_all(void);
-
-size_t svc_notification_get_count(void);
-esp_err_t svc_notification_get(size_t index, svc_notification_t *out);
-```
-
-### 7.3 实现要点
-
-- 通知存储为链表 / 动态数组
-- 每次 post / dismiss 发送 `SVC_EVENT_NOTIFICATION_POSTED / DISMISSED`
-- Framework 监听这些事件并更新 UI
-
-## 8. svc_power（电源服务）
-
-### 8.1 职责
-
-- 背光超时熄屏
-- 触摸唤醒
-- 深度睡眠（预留）
-- 关机 / 重启请求
-
-### 8.2 接口
+## 10. svc_power（电源服务）
 
 ```c
 esp_err_t svc_power_init(void);
@@ -447,7 +413,7 @@ esp_err_t svc_power_init(void);
 esp_err_t svc_power_set_backlight_timeout(uint32_t seconds);  // 0 = 不超时
 uint32_t svc_power_get_backlight_timeout(void);
 
-esp_err_t svc_power_set_brightness(uint8_t percent);  // 0-100，发布 SVC_EVENT_BRIGHTNESS_CHANGED
+esp_err_t svc_power_set_brightness(uint8_t percent);          // 0-100，发布 SVC_EVENT_BRIGHTNESS_CHANGED
 uint8_t svc_power_get_brightness(void);
 
 esp_err_t svc_power_wake(void);
@@ -458,60 +424,73 @@ esp_err_t svc_power_request_reboot(void);
 esp_err_t svc_power_request_shutdown(void);
 ```
 
-### 8.3 实现要点
+- `power_task`（优先级 2，核心 0）每秒检查；触摸 / 姿态事件重置超时
+- 熄屏只关背光，LCD 与 LVGL 保持运行
+- 关机 / 重启：重启走软复位；关机为屏幕关闭 + 待机（本板无电池，不做真正断电）
 
-- `power_task` (优先级 2, 核心 0) 每秒检查
-- 触摸事件 (`SVC_EVENT_TOUCH` 通过事件总线) 重置超时
-- 同时把触摸 / 手势事件转成系统事件：`SVC_EVENT_TOUCH`、`SVC_EVENT_GESTURE_SWIPE_*`
-- 关机请求：发布 `SVC_EVENT_SHUTDOWN_REQUEST`，主循环收到后 `esp_restart()`
-- 本板无电池，`shutdown` 用 `deep sleep` 模拟
+## 11. svc_imu（IMU 服务）
 
-## 9. 服务初始化顺序
+```c
+typedef enum {
+    SVC_IMU_EVT_ORIENTATION,   // 姿态变化
+    SVC_IMU_EVT_SHAKE,         // 摇晃
+    SVC_IMU_EVT_PICKUP,        // 抬手
+} svc_imu_evt_t;
+
+typedef void (*svc_imu_cb_t)(svc_imu_evt_t evt, void *user);
+
+esp_err_t svc_imu_init(void);
+esp_err_t svc_imu_read(periph_imu_data_t *out);
+esp_err_t svc_imu_register_callback(svc_imu_cb_t cb, void *user);
+```
+
+- `imu_task`（优先级 3，核心 0，50 ms 周期）采样
+- 判定姿态变化 / 摇晃 / 抬手，发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION`
+- 熄屏时用于姿态唤醒
+
+## 12. 服务初始化顺序
 
 ```c
 esp_err_t services_init(void) {
-    ESP_ERROR_CHECK(svc_watchdog_init());         // 1. 看门狗（先配成"只告警"）
-    ESP_ERROR_CHECK(svc_event_bus_init());        // 2. 事件总线（所有服务都依赖）
-    ESP_ERROR_CHECK(svc_settings_init());         // 3. 配置（NVS）
-    ESP_ERROR_CHECK(svc_storage_init());          // 4. 存储
-    ESP_ERROR_CHECK(svc_bt_init());               // 5. 蓝牙（必须在 Wi-Fi 之前，见 AGENTS 4.6）
-    ESP_ERROR_CHECK(svc_time_init());             // 6. 时间
-    ESP_ERROR_CHECK(svc_audio_init());            // 7. 音频
-    ESP_ERROR_CHECK(svc_net_init());              // 8. 网络
-    ESP_ERROR_CHECK(svc_power_init());            // 9. 电源
-    ESP_ERROR_CHECK(svc_imu_init());              // 10. IMU
-    ESP_ERROR_CHECK(svc_notification_init());     // 11. 通知（依赖事件总线）
-    ESP_ERROR_CHECK(svc_sysinfo_init());          // 12. 系统信息（含崩溃记录）
-    svc_shell_start();                            // 13. 串口命令行（失败不影响运行）
+    ESP_ERROR_CHECK(svc_watchdog_init());     // 1. 看门狗（先配成"只告警"）
+    ESP_ERROR_CHECK(svc_event_bus_init());    // 2. 事件总线（所有服务都依赖）
+    ESP_ERROR_CHECK(svc_settings_init());     // 3. 配置（NVS）
+    ESP_ERROR_CHECK(svc_storage_init());      // 4. 存储
+    svc_bt_init();                            // 5. 蓝牙（必须在 Wi-Fi 之前，见 AGENTS 4.6）
+    ESP_ERROR_CHECK(svc_time_init());         // 6. 时间
+    ESP_ERROR_CHECK(svc_audio_init());        // 7. 音频
+    ESP_ERROR_CHECK(svc_net_init());          // 8. 网络
+    ESP_ERROR_CHECK(svc_power_init());        // 9. 电源
+    ESP_ERROR_CHECK(svc_imu_init());          // 10. IMU
+    ESP_ERROR_CHECK(svc_io_init());           // 11. 外扩 IO
+    ESP_ERROR_CHECK(svc_camera_init());       // 12. 摄像头（不立即开）
+    ESP_ERROR_CHECK(svc_sysinfo_init());      // 13. 系统信息（含崩溃记录）
     return ESP_OK;
 }
 ```
 
-`svc_bt_init()` 必须紧跟 Storage 之后、Wi-Fi 之前：控制器要一块 30 KB 连续内部内存，主机的
-工作队列与任务栈又只能用内部 RAM，晚于 Wi-Fi / LVGL / 音频就会随机初始化失败（细节见
-`AGENTS.md` 4.6）。它失败只打警告，不阻塞启动。
+`svc_bt_init()` 必须紧跟 Storage 之后、Wi-Fi 之前：控制器要一块连续内部内存，主机的工作队列与任务栈又只能用内部 RAM，晚于 Wi-Fi / LVGL / 音频就会随机初始化失败（细节见 `AGENTS.md` 4.6）。它失败只打警告，不阻塞启动。
 
-`svc_watchdog_arm()` 不在 `services_init()` 里：要等启动全部完成（含首次 SPIFFS 格式化）后才
-打开"超时自动重启"，由 `main.c` 在挂载内置 Flash 之后调用。
+`svc_watchdog_arm()` 不在 `services_init()` 里：要等启动全部完成（含首次 SPIFFS 格式化）后才打开"超时自动重启"，由 `main.c` 在挂载内置 Flash 之后调用。
 
-## 10. 任务模型
-
-每个服务使用一个独立 FreeRTOS 任务：
+## 13. 任务模型
 
 | 服务 | 任务名 | 优先级 | 核心 |
 |------|--------|--------|------|
-| Event Bus | dispatcher_task | 5 | 0 |
-| Time | ntp_sync_task | 2 | 0 |
-| Audio | play_task | 6 | 1 |
-| Audio | rec_task | 5 | 1 |
-| Audio | tone_task | 4 | 1 |
-| Network | net_event_task | 4 | 0 |
-| Power | power_task | 2 | 0 |
+| Event Bus | `event_bus_task` | 4 | 0 |
+| Time | `ntp_sync_task` | 2 | 0 |
+| Audio | `play_task` | 6 | 1 |
+| Audio | `rec_task` | 5 | 1 |
+| Audio | `tone_task` | 4 | 1 |
+| Network | `net_event_task` | 4 | 0 |
+| Power | `power_task` | 2 | 0 |
+| IMU | `imu_task` | 3 | 0 |
+| Storage | `sd_monitor_task` | 3 | 0 |
 
-## 11. 跨服务依赖
+## 14. 跨服务依赖
 
-- `svc_audio` → `svc_storage`（路径 / 目录；文件内容经 VFS 直接读取）
-- `svc_audio` → `svc_notification`（通知点击后播放提示音）
+- `svc_audio` → `svc_storage`（路径；文件内容经 VFS 直接读）
 - `svc_net` → `svc_time`（SNTP 注册）
-- `svc_notification` → 所有服务（订阅 `*_POSTED` / `*_FINISHED` 事件）
-- `svc_power` → 所有服务（订阅 `SVC_EVENT_TOUCH` 事件）
+- `svc_io` → `periph_ext`
+- `svc_camera` → `periph_camera`
+- `svc_power` → 事件总线（订阅 `SVC_EVENT_TOUCH`、`SVC_EVENT_IMU_*`）
