@@ -61,6 +61,11 @@ svc_bt_state_t svc_bt_get_state(void);
 const char *svc_bt_state_name(svc_bt_state_t state);
 
 /**
+ * @brief 本机 BLE 设备名（广播里显示给中心设备的名字，界面提示用）
+ */
+const char *svc_bt_get_name(void);
+
+/**
  * @brief 是否已被中心设备连接
  */
 bool svc_bt_is_connected(void);

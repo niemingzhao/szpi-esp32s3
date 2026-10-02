@@ -120,10 +120,17 @@ lv_obj_t *fw_ui_row_btn(lv_obj_t *parent, const char *symbol, const char *text,
 esp_err_t fw_ui_row_btn_value(lv_obj_t *btn, const char *value);
 
 /**
- * @brief 创建"标签 + 滑块"一行（高 30，滑块 16 高）；返回滑块供读取数值
+ * @brief 创建"标签 + 滑块 + 数值"一行（高 30，滑块 16 高）；返回滑块供读取数值
+ *
+ * 右侧数值留空，用 fw_ui_slider_row_value() 更新；不需要数值时留空即可。
  */
 lv_obj_t *fw_ui_slider_row(lv_obj_t *parent, const char *label, int32_t min, int32_t max,
                            int32_t value, lv_event_cb_t cb, void *user);
+
+/**
+ * @brief 更新"标签 + 滑块"一行右侧的数值文本（slider 传 fw_ui_slider_row 的返回值）
+ */
+esp_err_t fw_ui_slider_row_value(lv_obj_t *slider, const char *text);
 
 #ifdef __cplusplus
 }

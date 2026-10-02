@@ -104,6 +104,9 @@ esp_err_t svc_audio_set_volume(uint8_t percent);
 uint8_t svc_audio_get_volume(void);
 esp_err_t svc_audio_set_mute(bool mute);
 
+/** 当前是否静音（界面进入时同步用） */
+bool svc_audio_get_mute(void);
+
 svc_audio_state_t svc_audio_get_state(void);
 
 esp_err_t svc_audio_register_callback(svc_audio_cb_t cb, void *user);

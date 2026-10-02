@@ -5,6 +5,8 @@
  *
  * 亮度滑块 + 熄屏超时 + 主题切换。亮度 / 熄屏超时由 svc_power 持久化（NVS namespace sys）；
  * 主题由 fw_theme 持久化并广播 SVC_EVENT_THEME_CHANGED，界面重建不在本 App 内做。
+ *
+ * 三个设置项用 fw_ui_slider_row / fw_ui_row_btn 的通用行（高 30 + 2 × 50），一屏放下不滚动。
  */
 
 #include "app_display.h"
@@ -40,10 +42,19 @@ static void theme_label(char *buf, size_t len)
     snprintf(buf, len, "%s", (fw_theme_current() == FW_THEME_LIGHT) ? "浅色" : "深色");
 }
 
+/* 滑块右侧显示当前百分比 */
+static void brightness_show(lv_obj_t *slider)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u%%", (unsigned)lv_slider_get_value(slider));
+    fw_ui_slider_row_value(slider, buf);
+}
+
 static void brightness_cb(lv_event_t *e)
 {
     lv_obj_t *slider = lv_event_get_target(e);
     svc_power_set_brightness((uint8_t)lv_slider_get_value(slider));
+    brightness_show(slider);
 }
 
 static void timeout_cb(lv_event_t *e)
@@ -87,7 +98,9 @@ static void *display_on_create(void)
     lv_obj_t *body = NULL;
     s_root = fw_ui_page(&body);
 
-    fw_ui_slider_row(body, "亮度", 0, 100, svc_power_get_brightness(), brightness_cb, NULL);
+    lv_obj_t *slider =
+        fw_ui_slider_row(body, "亮度", 0, 100, svc_power_get_brightness(), brightness_cb, NULL);
+    brightness_show(slider);
 
     s_timeout_row = fw_ui_row_btn(body, LV_SYMBOL_EYE_OPEN, "熄屏超时", timeout_cb, NULL);
     char buf[24];

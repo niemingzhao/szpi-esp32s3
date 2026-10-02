@@ -4,7 +4,8 @@
  * Framework - Boot Animation 实现
  *
  * 开机画面：全屏黑底 + 立创官方 120x120 Logo（静态展示），
- * 同时播放一声 1 kHz / 300 ms 提示音（先解除静音并等功放稳定），
+ * 同时播放一声 1 kHz / 300 ms 提示音（先解除静音并等功放稳定）；
+ * 用户在「声音」里设了静音则跳过提示音，且不改动静音状态。
  * 展示结束后由 main 切到桌面。
  */
 
@@ -48,11 +49,19 @@ esp_err_t fw_boot_animation(void)
     lvgl_port_unlock();
 
     /* 开机提示音：先打开功放并等它稳定，再放一声长滴，
-     * 否则静音解除的斜坡会把提示音开头吃掉（表现为"听不到"） */
-    svc_audio_set_mute(false);
+     * 否则静音解除的斜坡会把提示音开头吃掉（表现为"听不到"）。
+     * 用户设了静音就不响，也不去动"静音"状态 —— 否则每次开机都会把静音清掉，
+     * 表现就是"静音记不住"（曾经如此：这里无条件调了 svc_audio_set_mute(false)）。
+     * 等待时间不受静音影响，保证开机画面时长稳定。 */
+    const bool muted = svc_audio_get_mute();
+    if (!muted) {
+        svc_audio_set_mute(false);
+    }
     vTaskDelay(pdMS_TO_TICKS(BOOT_AMP_MS));
 
-    svc_audio_play_tone_async(BOOT_BEEP_HZ, BOOT_BEEP_MS);
+    if (!muted) {
+        svc_audio_play_tone_async(BOOT_BEEP_HZ, BOOT_BEEP_MS);
+    }
     vTaskDelay(pdMS_TO_TICKS(BOOT_BEEP_MS + 100));
 
     vTaskDelay(pdMS_TO_TICKS(BOOT_HOLD_MS));

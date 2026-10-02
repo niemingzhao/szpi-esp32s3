@@ -408,6 +408,8 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 | 底部入口 | 可选的 50 px `fw_ui_row_btn` |
 | 行距 | 用 `fw_ui_page` 默认的 8 px；不够时页面容器自己设 6 px |
 
+**设置 / 列表型页面**：不必凑主信息卡与九宫格，用「头部行 + 内容」两块即可。头部放状态文字（撑满剩余宽度）+ 图标按钮（Wi-Fi、蓝牙都这么做）；内容放 `fw_ui_list()` 或若干 `fw_ui_row_btn()` / `fw_ui_slider_row()`。内容超过一屏时只让列表自身滚动，页面容器显式 `lv_obj_set_scrollable(page, false)`；需要多页时在同一个根屏里放几块同尺寸容器做显隐，返回交给 `on_back`（见 `app_wifi.c`、`app_bt.c`）。
+
 **3. 网格必须左对齐**
 
 `lv_obj_set_flex_align(g, LV_FLEX_ALIGN_START, ...)`：塞不满一行时（例如 8 项放 9 宫格），`SPACE_BETWEEN` 会把最后一格推到最右边，看着像"跳到第三列"；`START` 让不满的行左对齐、优先充满格位。行满时两者一致。

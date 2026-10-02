@@ -121,6 +121,7 @@ Apps / 脚本 → Framework → Services → Peripherals → Drivers → ESP-IDF
 - **内存分配**：`sdkconfig.defaults` 里设 `CONFIG_LV_USE_CLIB_MALLOC=y`（choice 里选中 CLIB，LVGL 的 `LV_USE_STDLIB_MALLOC` 随之等于 `LV_STDLIB_CLIB`，去走 IDF 堆，受 `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 影响）。注意 `CONFIG_LV_STDLIB_CLIB` 只是个 `int` 常量、**不是**开关，写成 `=y` 会被 Kconfig 静默忽略而回落到内置 TLSF 分配器。不要再用 `LV_MEM_CUSTOM`。
 - **图片解码**：PNG 是 `LV_USE_LODEPNG`、JPEG 是 `LV_USE_TJPGD`（旧版叫 `LV_USE_PNG`）。
 - **LVGL 9.6 废弃了通用 flag 接口**：`lv_obj_add_flag` / `lv_obj_clear_flag` / `lv_obj_remove_flag` / `lv_obj_has_flag` / `lv_obj_set_flag` 都改成专用 setter，如 `lv_obj_set_scrollable(o, false)`、`lv_obj_set_clickable(o, true)`、`lv_obj_set_hidden(o, true)`、`lv_obj_is_hidden(o)`。用户自定义 flag（`LV_OBJ_FLAG_USER_1`）没有专用 setter，改用 `lv_obj_set_user_data()` / `lv_obj_get_user_data()` 传标记（对象由 `lv_malloc_zeroed` 分配，`user_data` 初值必为 NULL）。`lv_timer_t` 已是不可见类型，读它的 data 要用 `lv_timer_get_user_data(t)`，不能写 `t->user_data`。
+- **`lv_obj_remove_style_all()` 会连本地样式一起删掉**：`lv_obj_set_width/height()`（以及 `lv_obj_set_style_*`）写的都是对象的本地样式，先 `set_size` 再 `remove_style_all` 会把尺寸打回类默认值（`lv_obj` 是 `LV_DPI_DEF` = 130×130），表现为网格里冒出一堆巨型空对象、后面的控件被挤出屏幕。要么先 `remove_style_all` 再 `set_size`，要么干脆别用它（改设 `bg_opa = TRANSP` / `border_width = 0` 就行）。
 - **Lua 的 `lualib.h` 预声明了标准库入口符号**（`luaopen_io` / `luaopen_os` / `luaopen_string` / `luaopen_math` 等）：`fw_script.c` 里脚本模块的 C 入口不能与它们同名，否则「static declaration follows non-static declaration」。我们的 `io` 模块入口因此叫 `luaopen_io_hw`。
 - **工具链实际是 GCC 15.2**（`esp-15.2.0_20251204`，`-std=gnu23`），4.18 那批降级清单在它上面依然适用。
 - 上述选项在 ESP-IDF 下经 lvgl 组件的 Kconfig 配置。
@@ -176,6 +177,10 @@ BLE HID 设备模拟（PRD `NET-009`）也在 `svc_bt` 内：`svc_bt_hid_dev.c/h
 
 排查入口：启动日志里的 `callbacks: gatts=... gap=... match=x/y`（用 `esp_ble_gatts_get_callback()` / `esp_ble_gap_get_callback()` 读真正生效的回调指针）、`selftest: state=... adv(ready/active) scan_ready=...`（`svc_bt_init()` 后 2 s 自动打印）。
 
+扫描（中心角色）的三条关键日志：`scan requested (N s)`（请求已发出）、`first device: xx:xx:... rssi=..`（本轮第一条结果，证明真的收到了广播包）、`scan done: N device(s)`（扫描结束与总数）。收不到设备时按这三条定位：只有 `scan requested` 说明扫描没拿到射频（先确认不是在和 Wi-Fi / 广播抢时隙），连 `scan done` 都没有说明事件没回来（服务侧会补发，见下）。另外扫描参数用 `BLE_SCAN_DUPLICATE_DISABLE`（与 IDF 例程一致）：去重交给主机侧，避免控制器侧残留的重复表把后续扫描的设备挡掉。
+
+**扫描时长不要交给控制器**：实测控制器按 `duration` 自己到点停时**不会**给主机发 `ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT`，应用收不到 `SCAN_DONE` 就会一直停在"正在扫描…"；如果事后另调一次 `esp_ble_gap_stop_scanning()` 补事件，BTM 那边扫描早已不是 active，会打出 `E BT_BTM: BTM_BleScan scan not active` + `W BT_APPL: bta_dm_ble_scan stop scan failed` 两条错误日志。正确做法是 `esp_ble_gap_start_scanning(0)`（持续扫描）+ 自己定时停：`svc_bt_scan_start()` 里用 `bt_scan_stop_schedule()` 起一个一次性 `esp_timer`，到点显式 `esp_ble_gap_stop_scanning()` —— 这时扫描一定还是 active，BTM 正常走完停止流程，`SCAN_DONE` 必定送达且日志干净。
+
 ### 4.7 FATFS 三项必须同时保留
 
 `storage` 分区上 `CONFIG_FATFS_LFN_HEAP=y`、`CONFIG_FATFS_CODEPAGE_936=y`、`CONFIG_FATFS_API_ENCODING_UTF_8=y` 三项必须一起保留，否则 TF 卡上的非 ASCII 长文件名会乱码。
@@ -212,6 +217,8 @@ ST7789 的 GRAM 掉电 / 复位后不会自动清空。若先开背光再等 LVG
 ### 4.10 开机提示音要先打成功放
 
 `periph_audio_set_mute(false)` 之后功放 / codec 有几百毫秒的启动斜坡。若紧接着播放很短的提示音，开头会被这段斜坡吃掉（听起来"没有声音"）。`fw_boot_animation()` 先解除静音、等 150 ms，再播放 300 ms 的提示音。
+
+**开机提示音不能无条件调 `svc_audio_set_mute(false)`**：静音状态是持久化的（`sys/muted`），开机时 `svc_audio_init()` 刚读回来，这里再解除静音会把它写回 0 —— 表现是"在「声音」里设了静音，重启后又变成没静音"。正确做法是先 `svc_audio_get_mute()`，静音就整段跳过提示音（也不动状态），没静音才解除静音 + 播放。
 
 ### 4.11 点击请用 LV_EVENT_SHORT_CLICKED
 
@@ -322,7 +329,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 |------|------|
 | 页面根屏 + 内容容器（从状态栏下方开始、内边距 12、行距 8） | `fw_ui_page(&content)` |
 | 整行入口（高 50、卡片底 + 描边，右侧可显示数值） | `fw_ui_row_btn()` + `fw_ui_row_btn_value()` |
-| "标签 + 滑块"一行 | `fw_ui_slider_row()` |
+| "标签 + 滑块 +（可选）数值"一行 | `fw_ui_slider_row()` + `fw_ui_slider_row_value()` |
 | 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`（同一时刻只保留一个，新的顶掉旧的）、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
 | 主题色 | 只用 `fw_theme_color_*()`（见 4.13） |
 | 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`；状态栏图标是 `fw_status_icons.h` 里的 `icon_status_*`（20×20 白色 + alpha，运行时 `image_recolor` 染色，6 个图标的绑定语义见 `docs/03-design/02-ui-system.md` 第 2 节）；桌面彩色图标是 `fw_home_icons.h` 里的 `icon_home_*`；卡片内的功能性图标用 LVGL `LV_SYMBOL_*` / `fw_asset_symbol_for(app_name)`（两个图标生成脚本见 `tools/`） |

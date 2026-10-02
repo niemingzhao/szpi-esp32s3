@@ -15179,7 +15179,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] = {
         .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     },
     {   /* 汉字 / 全角标点 */
-        .range_start = 19968, .range_length = 20895, .glyph_id_start = 96,
+        .range_start = 19968, .range_length = 20896, .glyph_id_start = 96,
         .unicode_list = unicode_list_1, .glyph_id_ofs_list = NULL, .list_length = 3755,
         .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }

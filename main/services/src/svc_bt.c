@@ -60,6 +60,8 @@ static bool s_adv_want = false;     /* 期望广播 */
 static bool s_adv_active = false;   /* 正在广播 */
 static bool s_scan_ready = false;   /* 扫描参数已提交 */
 static bool s_scan_pending = false; /* 参数就绪后要启动扫描 */
+static volatile bool s_scanning = false;   /* 扫描进行中（含 SCAN_DONE 已发出） */
+static bool s_scan_first_log = false;      /* 本轮扫描是否已打过第一条结果日志 */
 static uint32_t s_scan_duration_s = BT_SCAN_DEFAULT_S;
 
 /* 诊断：GAP 回调是否真的在工作（0 表示一个 GAP 事件都没收到） */
@@ -76,6 +78,9 @@ static esp_timer_handle_t s_selftest_timer = NULL;
 #define BT_ADV_RETRY_MAX      5
 static esp_timer_handle_t s_adv_retry_timer = NULL;
 static uint8_t s_adv_retry = 0;
+
+/* 扫描到点的兜底停止（见 bt_scan_stop_cb） */
+static esp_timer_handle_t s_scan_stop_timer = NULL;
 
 static uint8_t s_value[BT_ATTR_MAX_LEN];
 static uint16_t s_value_len = 0;
@@ -127,7 +132,9 @@ static esp_ble_scan_params_t s_scan_params = {
     .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
     .scan_interval = 0x0050,                                /* 50 ms */
     .scan_window = 0x0030,                                  /* 30 ms */
-    .scan_duplicate = BLE_SCAN_DUPLICATE_ENABLE,
+    /* 不在控制器里做重复过滤（IDF 例程同样用 DISABLE）：去重交给主机侧，
+     * 免得控制器侧残留的重复表把后续扫描的设备全挡掉 */
+    .scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE,
 };
 
 /* ------------------------------- 状态 ------------------------------- */
@@ -150,6 +157,11 @@ const char *svc_bt_state_name(svc_bt_state_t state)
     case SVC_BT_STATE_CONNECTED: return "connected";
     default: return "unknown";
     }
+}
+
+const char *svc_bt_get_name(void)
+{
+    return BT_DEVICE_NAME;
 }
 
 /* 期望广播但还没在广播时启动广播（已连接 / 数据未提交时不动） */
@@ -200,6 +212,36 @@ static void bt_adv_retry_schedule(void)
 
     esp_timer_stop(s_adv_retry_timer);
     esp_timer_start_once(s_adv_retry_timer, BT_ADV_RETRY_DELAY_US);
+}
+
+/* 扫描到点显式停：扫描期间一直用 duration = 0（持续扫描），停的动作完全由这里做。
+ * 不把时长交给控制器 —— 实测控制器自己到点停时不会给主机发 SCAN_STOP_COMPLETE，
+ * 应用就收不到 SCAN_DONE；自己停则 BTM 正常走完停止流程，事件一定会来。
+ * 到这一步扫描一定还是 active，不会再出现 "scan not active" 的报错（AGENTS 4.6） */
+static void bt_scan_stop_cb(void *arg)
+{
+    (void)arg;
+
+    if (!s_inited || !s_scanning) return;
+
+    esp_ble_gap_stop_scanning();
+}
+
+static void bt_scan_stop_schedule(uint32_t duration_s)
+{
+    if (s_scan_stop_timer == NULL) {
+        const esp_timer_create_args_t targs = {
+            .callback = bt_scan_stop_cb,
+            .name = "svc_bt_scan_t",
+        };
+        if (esp_timer_create(&targs, &s_scan_stop_timer) != ESP_OK) {
+            s_scan_stop_timer = NULL;
+            return;
+        }
+    }
+
+    esp_timer_stop(s_scan_stop_timer);
+    esp_timer_start_once(s_scan_stop_timer, (uint64_t)duration_s * 1000 * 1000);
 }
 
 /* 连接状态由本服务的 GATTS 回调与 HID 回调共同维护（同一条链路） */
@@ -284,6 +326,15 @@ static void bt_on_scan_result(const esp_ble_gap_cb_param_t *param)
         ESP_LOGD(TAG, "found %02x:%02x:%02x:%02x:%02x:%02x rssi=%d '%s'",
                  r->bda[0], r->bda[1], r->bda[2], r->bda[3], r->bda[4], r->bda[5],
                  (int)r->rssi, s_scan[idx].name);
+
+        /* 本轮第一条结果打一次 INFO：确认扫描真的收到了广播包
+         * （周围设备多时逐条打 INFO 会刷爆串口，所以只打第一条） */
+        if (!s_scan_first_log) {
+            s_scan_first_log = true;
+            ESP_LOGI(TAG, "first device: %02x:%02x:%02x:%02x:%02x:%02x rssi=%d '%s'",
+                     r->bda[0], r->bda[1], r->bda[2], r->bda[3], r->bda[4], r->bda[5],
+                     (int)r->rssi, s_scan[idx].name);
+        }
     }
 
     xSemaphoreGive(s_mux);
@@ -348,13 +399,21 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
         s_scan_ready = true;
         if (s_scan_pending) {
             s_scan_pending = false;
-            esp_ble_gap_start_scanning(s_scan_duration_s);
+            /* 持续扫描（0），时长由 bt_scan_stop_schedule() 控制，见 bt_scan_stop_cb */
+            if (esp_ble_gap_start_scanning(0) == ESP_OK) {
+                bt_scan_stop_schedule(s_scan_duration_s);
+            }
         }
         break;
 
     case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
         if (param->scan_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+            /* 起不来也要通知应用，否则界面会一直停在"正在扫描…" */
             ESP_LOGW(TAG, "scan start failed: %d", param->scan_start_cmpl.status);
+            s_scanning = false;
+            if (s_scan_stop_timer != NULL) esp_timer_stop(s_scan_stop_timer);
+            uint32_t zero = 0;
+            svc_event_bus_publish(SVC_EVENT_BT_SCAN_DONE, &zero, sizeof(zero));
         } else {
             ESP_LOGI(TAG, "scanning %u s", (unsigned)s_scan_duration_s);
         }
@@ -365,6 +424,8 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
         break;
 
     case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT: {
+        s_scanning = false;
+        if (s_scan_stop_timer != NULL) esp_timer_stop(s_scan_stop_timer);
         uint32_t count = (uint32_t)bt_scan_count();
         ESP_LOGI(TAG, "scan done: %u device(s)", (unsigned)count);
         svc_event_bus_publish(SVC_EVENT_BT_SCAN_DONE, &count, sizeof(count));
@@ -683,6 +744,9 @@ esp_err_t svc_bt_deinit(void)
     if (s_selftest_timer != NULL) {
         esp_timer_stop(s_selftest_timer);
     }
+    if (s_scan_stop_timer != NULL) {
+        esp_timer_stop(s_scan_stop_timer);
+    }
     if (s_adv_retry_timer != NULL) {
         esp_timer_stop(s_adv_retry_timer);
     }
@@ -761,6 +825,9 @@ esp_err_t svc_bt_scan_start(uint32_t duration_s)
 {
     if (!s_inited) return ESP_ERR_INVALID_STATE;
 
+    /* 已经有一轮在跑：忽略，避免重复调用把上一轮的结果清掉 */
+    if (s_scanning) return ESP_OK;
+
     if (s_mux != NULL && xSemaphoreTake(s_mux, portMAX_DELAY) == pdTRUE) {
         s_scan_count = 0;
         memset(s_scan, 0, sizeof(s_scan));
@@ -768,16 +835,25 @@ esp_err_t svc_bt_scan_start(uint32_t duration_s)
     }
 
     s_scan_duration_s = (duration_s > 0) ? duration_s : BT_SCAN_DEFAULT_S;
+    s_scan_first_log = false;
+    s_scanning = true;
 
     /* 扫描参数在初始化时已设置；若还没就绪，等就绪回调里再启动 */
     if (!s_scan_ready) {
         s_scan_pending = true;
+        ESP_LOGI(TAG, "scan requested (%u s), waiting for scan params",
+                 (unsigned)s_scan_duration_s);
         return ESP_OK;
     }
 
-    esp_err_t err = esp_ble_gap_start_scanning(s_scan_duration_s);
+    ESP_LOGI(TAG, "scan requested (%u s)", (unsigned)s_scan_duration_s);
+    /* duration = 0：持续扫描，由 bt_scan_stop_schedule() 到点显式停（见 bt_scan_stop_cb） */
+    esp_err_t err = esp_ble_gap_start_scanning(0);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "scan start failed: %s", esp_err_to_name(err));
+        s_scanning = false;
+    } else {
+        bt_scan_stop_schedule(s_scan_duration_s);
     }
     return err;
 }
@@ -785,7 +861,11 @@ esp_err_t svc_bt_scan_start(uint32_t duration_s)
 esp_err_t svc_bt_scan_stop(void)
 {
     if (!s_inited) return ESP_ERR_INVALID_STATE;
-    if (!s_scan_ready) return ESP_OK;
+
+    if (s_scan_stop_timer != NULL) esp_timer_stop(s_scan_stop_timer);
+
+    /* 没在扫就别调 esp_ble_gap_stop_scanning()：BTM 会打 "scan not active" 的错误日志 */
+    if (!s_scanning) return ESP_OK;
     return esp_ble_gap_stop_scanning();
 }
 

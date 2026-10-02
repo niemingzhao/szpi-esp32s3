@@ -32,6 +32,7 @@ static const char *TAG = "svc.audio";
 
 #define AUDIO_NS            "sys"
 #define AUDIO_VOL_KEY       "volume"
+#define AUDIO_MUTE_KEY      "muted"
 #define AUDIO_TASK_STACK    4096
 #define AUDIO_TASK_PRIO     6
 #define AUDIO_TASK_CORE     1
@@ -61,6 +62,21 @@ static volatile bool s_stream_active = false;   /* 外部 PCM 流已打开（调
 static uint8_t s_volume = 80;
 static bool s_muted = false;
 static bool s_ready = false;
+
+/* 音量落 NVS 的消抖：拖动滑块时每格都会调 svc_audio_set_volume()，
+ * 直接写 flash 就是几十次写放大（每次 nvs_commit 还要卡住 LVGL 任务几毫秒）。
+ * 这里只记待写值，由音频任务空闲满 1 s 后再写一次（见 audio_task）。
+ * 静音切换很少发生，不用消抖、直接写（见 svc_audio_set_mute） */
+#define AUDIO_VOL_SAVE_MS   1000
+static int s_vol_pending = -1;
+
+static void vol_save_flush(void)
+{
+    if (s_vol_pending >= 0) {
+        svc_settings_set_u8(AUDIO_NS, AUDIO_VOL_KEY, (uint8_t)s_vol_pending);
+        s_vol_pending = -1;
+    }
+}
 
 static svc_audio_cb_t s_cb = NULL;
 static void *s_cb_user = NULL;
@@ -595,7 +611,12 @@ static void audio_task(void *arg)
     audio_msg_t msg;
 
     while (true) {
-        if (xQueueReceive(s_queue, &msg, portMAX_DELAY) != pdTRUE) continue;
+        if (xQueueReceive(s_queue, &msg, pdMS_TO_TICKS(AUDIO_VOL_SAVE_MS)) != pdTRUE) {
+            vol_save_flush();             /* 空闲满 1 s：把待写的音量落 NVS */
+            continue;
+        }
+
+        vol_save_flush();                 /* 有命令进来也先落一次，别等空闲 */
 
         s_stop_req = false;
         s_pause_req = false;
@@ -631,6 +652,12 @@ esp_err_t svc_audio_init(void)
     s_volume = vol;
     periph_audio_set_volume(s_volume);
 
+    /* 静音状态与音量一样持久化（重启后仍保持静音） */
+    uint8_t muted = 0;
+    svc_settings_get_u8(AUDIO_NS, AUDIO_MUTE_KEY, &muted, 0);
+    s_muted = (muted != 0);
+    periph_audio_set_mute(s_muted);
+
     s_queue = xQueueCreate(1, sizeof(audio_msg_t));
     if (s_queue == NULL) return ESP_ERR_NO_MEM;
 
@@ -643,7 +670,7 @@ esp_err_t svc_audio_init(void)
     }
 
     s_ready = true;
-    ESP_LOGI(TAG, "initialized");
+    ESP_LOGI(TAG, "initialized (volume=%u%%, mute=%d)", (unsigned)s_volume, (int)s_muted);
     return ESP_OK;
 }
 
@@ -652,6 +679,9 @@ esp_err_t svc_audio_deinit(void)
     s_ready = false;
     s_stop_req = true;                    /* 让正在播的内容尽快退出 */
     s_stream_active = false;
+
+    /* 把还没落 NVS 的音量写掉 */
+    vol_save_flush();
 
     if (s_task != NULL) {
         vTaskDelete(s_task);              /* 任务阻塞在队列上，直接删除 */
@@ -828,7 +858,9 @@ esp_err_t svc_audio_set_volume(uint8_t percent)
 
     if (s_ready) {
         periph_audio_set_volume(percent);
-        svc_settings_set_u8(AUDIO_NS, AUDIO_VOL_KEY, percent);
+
+        /* 只记待写值，由音频任务停稳后落 NVS（拖动时不做 flash 写，见 AUDIO_VOL_SAVE_MS） */
+        s_vol_pending = (int)percent;
     }
     return ESP_OK;
 }
@@ -840,9 +872,22 @@ uint8_t svc_audio_get_volume(void)
 
 esp_err_t svc_audio_set_mute(bool mute)
 {
+    const bool changed = (s_muted != mute);
+
     s_muted = mute;
     if (s_ready) periph_audio_set_mute(mute);
+
+    /* 静音切换很少发生，直接落 NVS（不跟随音量的消抖），免得刚静音就断电丢掉；
+     * 状态没变就不写，省一次 flash */
+    if (changed && s_ready) {
+        svc_settings_set_u8(AUDIO_NS, AUDIO_MUTE_KEY, mute ? 1 : 0);
+    }
     return ESP_OK;
+}
+
+bool svc_audio_get_mute(void)
+{
+    return s_muted;
 }
 
 svc_audio_state_t svc_audio_get_state(void)

@@ -518,17 +518,18 @@ lv_obj_t *fw_ui_slider_row(lv_obj_t *parent, const char *label, int32_t min, int
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *l = lv_label_create(row);
     lv_label_set_text(l, label != NULL ? label : "");
     lv_obj_set_style_text_font(l, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(l, fw_theme_color_text_primary(), 0);
-    lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
 
     lv_obj_t *bar = lv_slider_create(row);
-    lv_obj_set_width(bar, lv_pct(78));
     lv_obj_set_height(bar, 16);
-    lv_obj_align(bar, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_flex_grow(bar, 1);
     lv_slider_set_range(bar, min, max);
     lv_slider_set_value(bar, value, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar, fw_theme_color_bg_secondary(), LV_PART_MAIN);
@@ -538,6 +539,39 @@ lv_obj_t *fw_ui_slider_row(lv_obj_t *parent, const char *label, int32_t min, int
     lv_obj_set_style_border_color(bar, fw_theme_color_border(), LV_PART_KNOB);
     if (cb != NULL) lv_obj_add_event_cb(bar, cb, LV_EVENT_VALUE_CHANGED, user);
 
+    /* 右侧数值文本：先建好（空），由 fw_ui_slider_row_value() 更新；用 USER_1 标记便于查找 */
+    lv_obj_t *v = lv_label_create(row);
+    lv_label_set_text(v, "");
+    lv_obj_set_style_text_font(v, fw_asset_font_cn(), 0);
+    lv_obj_set_style_text_color(v, fw_theme_color_text_secondary(), 0);
+    lv_obj_set_user_data(v, (void *)1);
+
     lvgl_port_unlock();
     return bar;
+}
+
+esp_err_t fw_ui_slider_row_value(lv_obj_t *slider, const char *text)
+{
+    if (slider == NULL) return ESP_ERR_INVALID_ARG;
+
+    lvgl_port_lock(0);
+
+    lv_obj_t *row = lv_obj_get_parent(slider);
+    if (row == NULL) {
+        lvgl_port_unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    uint32_t n = lv_obj_get_child_cnt(row);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(row, (int32_t)i);
+        if (lv_obj_get_user_data(child) != NULL) {
+            lv_label_set_text(child, text != NULL ? text : "");
+            lvgl_port_unlock();
+            return ESP_OK;
+        }
+    }
+
+    lvgl_port_unlock();
+    return ESP_ERR_NOT_FOUND;
 }

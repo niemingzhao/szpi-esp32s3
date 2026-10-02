@@ -269,6 +269,7 @@ esp_err_t svc_audio_record_stop(void);
 esp_err_t svc_audio_set_volume(uint8_t percent);
 uint8_t svc_audio_get_volume(void);
 esp_err_t svc_audio_set_mute(bool mute);
+bool svc_audio_get_mute(void);
 
 svc_audio_state_t svc_audio_get_state(void);
 
@@ -301,6 +302,10 @@ esp_err_t svc_audio_play_tone_async(uint16_t freq_hz, uint32_t ms);
 - 文件 / HTTP(S) 链接 / 外部 PCM 流三种播放来源共用同一播放通路：链接由 HTTP 客户端边下边播，外部流由调用方提供 PCM 数据
 - 播放状态由互斥锁保护，事件回调经队列投递到 `svc_audio`
 - tone 用正弦波生成器临时占用播放通路，播完恢复
+- 音量与静音都持久化到 NVS（`sys/volume`、`sys/muted`），开机在 `svc_audio_init()` 里读回并应用
+- 音量落 NVS 做消抖：`svc_audio_set_volume()` 只记待写值，音频任务空闲满 1 s（或下一条命令进来）才写一次，避免拖动滑块时几十次 `nvs_commit` 卡住 LVGL 任务；静音切换很少发生，`svc_audio_set_mute()` 直接写（状态没变不写）
+- 静音只静音输出（`periph_audio_set_mute`），不改音量值 —— 取消静音即恢复原音量，也不会因为静音一次就丢掉用户设好的音量
+- 开机提示音（`fw_boot_animation`）先看 `svc_audio_get_mute()`：静音就跳过，不能无条件解除静音（会把持久化的静音清掉，见 AGENTS 4.10）
 
 ## 7. svc_net（网络服务）
 
@@ -415,6 +420,7 @@ esp_err_t svc_bt_init(void);          // 必须在 Wi-Fi 之前初始化（AGENT
 esp_err_t svc_bt_deinit(void);        // 仅关机前释放用
 svc_bt_state_t svc_bt_get_state(void);
 const char *svc_bt_state_name(svc_bt_state_t state);
+const char *svc_bt_get_name(void);               // 本机 BLE 名（界面提示用）
 bool svc_bt_is_connected(void);
 esp_err_t svc_bt_get_diag(svc_bt_diag_t *out);   // 诊断：状态 / 广播 / 扫描 / GAP 事件计数
 esp_err_t svc_bt_adv_start(void);
@@ -439,6 +445,7 @@ esp_err_t svc_bt_hid_consumer_click(uint8_t usage);
 - 仅 BLE 4.2，Bluedroid；控制器活动实例数保持 IDF 默认
 - 仅作外设（peripheral）角色：广播、被中心设备连接、GATT 从机读写与通知；不发起中心设备连接，不做 GATT 客户端读写
 - 事件发布 `SVC_EVENT_BT_STATE_CHANGED` / `SVC_EVENT_BT_SCAN_DONE`
+- 扫描：`esp_ble_gap_start_scanning(0)` 持续扫描，时长由服务自己的 `esp_timer`（`bt_scan_stop_schedule()`）到点显式 `esp_ble_gap_stop_scanning()` —— 控制器自己按 duration 停不会发 `SCAN_STOP_COMPLETE`，应用会收不到 `SCAN_DONE`（原因见 AGENTS 4.6）
 - HID 报告要等配对完成后才能发（`svc_bt_hid_is_ready()`）
 - GATTS / GAP 回调由 `svc_bt` 统一注册，再按 app_id / gatts_if 转发给 HID
 
