@@ -135,7 +135,7 @@ static int l_ui_toast(lua_State *L)
 /* 建页面：一个脚本只留一个页面，重复调用会先把旧的删掉。
  *
  * 建好之后必须切过去：页面只是内存里的对象，不切屏屏幕上看不到任何东西。
- * 切之前先记下"脚本界面之前"正在显示的屏（正常路径就是脚本管理器 Scripts 的列表根屏），
+ * 切之前先记下"脚本界面之前"正在显示的屏（正常路径就是脚本管理 Scripts 的列表根屏），
  * 停止 / 出错时由 teardown_script() 切回去。
  *
  * fw_window 的 s_active 是裸指针：切屏前先 fw_window_sync_active() 和 LVGL 实际活动屏
@@ -149,7 +149,7 @@ static int l_ui_page(lua_State *L)
     fw_window_sync_active();
 
     /* 只要当前前台不是本脚本的页，就把它记为回退目标。分三种情况：
-     *   - 第一次建页：前台是启动脚本的那个 App（正常为脚本管理器 Scripts）。
+     *   - 第一次建页：前台是启动脚本的那个 App（正常为脚本管理 Scripts）。
      *   - 重复建页且脚本页仍在前台：不重记，保留最初的那个 App 屏。
      *   - 脚本页已不在前台（运行中换过主题、或用户按了返回键）：重记当前前台，
      *     这样回退目标始终是个活的屏，避免旧指针悬空后按地址复用误切。
@@ -390,7 +390,7 @@ typedef struct {
 static const script_event_map_t EVENT_MAP[] = {
     { "touch",           SVC_EVENT_TOUCH },
     /* BOOT 键：回调参数是 1 字节字符串，string.byte(v) 得到事件序号
-     * （0 单击 / 1 双击 / 2 长按 / 3 极长按） */
+     * （0 单击 / 1 双击 / 2 长按） */
     { "key",             SVC_EVENT_KEY },
     { "imu_motion",      SVC_EVENT_IMU_MOTION },
     { "imu_orientation", SVC_EVENT_IMU_ORIENTATION },
@@ -1999,7 +1999,7 @@ static void script_task(void *arg)
 
 /* --------------------- 内置示例脚本（首次启动释放） --------------------- */
 
-/* 开头的 -- @name / -- @desc 会被 fw_script_scan() 解析，脚本管理器据此显示名称与说明 */
+/* 开头的 -- @name / -- @desc 会被 fw_script_scan() 解析，脚本管理据此显示名称与说明 */
 
 static const char SAMPLE_CLOCK_LUA[] =
     "-- @name 时钟\n"

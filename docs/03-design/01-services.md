@@ -65,7 +65,7 @@ typedef enum {
     // 电源
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
-    // BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按）
+    // BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按）
     SVC_EVENT_KEY,
     SVC_EVENT_SHUTDOWN_REQUEST,
 
@@ -81,6 +81,9 @@ typedef enum {
     SVC_EVENT_AUDIO_PLAYBACK_ERROR,
     SVC_EVENT_AUDIO_RECORD_STARTED,
     SVC_EVENT_AUDIO_RECORD_FINISHED,
+
+    // 摄像头（负载为 bool：true = 已打开）
+    SVC_EVENT_CAMERA_STATE_CHANGED,
 
     // 脚本
     SVC_EVENT_SCRIPT_STARTED,
@@ -469,6 +472,7 @@ void svc_camera_release(void);
 ```
 
 - `svc_io` 与 `svc_camera` 是薄封装，直接转发到 `periph_ext` / `periph_camera`
+- `svc_camera_open()` / `svc_camera_close()` 会发布 `SVC_EVENT_CAMERA_STATE_CHANGED`（负载 bool），状态栏据此点亮 / 熄灭摄像头图标
 - `svc_ws` 只收发文本帧，不做二进制帧
 - MQTT / WebSocket 使用各自托管组件
 
@@ -513,8 +517,9 @@ esp_err_t svc_imu_read(periph_imu_data_t *out);
 
 - `imu_task`（优先级 3，核心 0，50 ms 周期）采样
 - 判定运动 / 朝向变化，发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION`；判定摇晃与抬手，发布 `SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_PICKUP`
+- 抬手判定：设备"平放且静止"（重力在 z 轴上的占比 ≥ 0.92、无运动）达 `pickup_still_ms` 后进入待命；之后屏幕立起来（重力在 z 轴上的占比 ≤ `pickup_tilt_pct`，即倾斜约 30° 以上）并保持 `pickup_hold_ms`，判为"拿起设备"。待命之后**不再重新累计"平放静止"**，所以缓慢拿起（中途有停顿、抖动）也能测到
 - 阈值可用 `svc_settings` 的 `imu` 命名空间调整，见下表；服务启动时读一次并缓存，运行期改 NVS 需重启服务（或重启设备）才生效
-- 熄屏时用于姿态唤醒
+- 熄屏时用于抬手唤醒（摇晃 / 运动不唤醒，避免碰到就亮屏）
 
 阈值 key（比例类按 100 倍整数存）：
 
@@ -525,12 +530,12 @@ esp_err_t svc_imu_read(periph_imu_data_t *out);
 | `orient_axis_g` | 60 | 朝向判定时重力在某轴上的占比（存 60 = 0.60） |
 | `shake_count` | 3 | 摇晃判定窗口内的越阈次数 |
 | `shake_window_ms` | 1000 | 摇晃统计窗口（ms） |
-| `pickup_still_ms` | 2000 | 抬手判定要求的连续静止时长（ms） |
-| `pickup_step_g` | 35 | 抬手判定的加速度阶跃（存 35 = 0.35 g） |
-| `pickup_hold_ms` | 800 | 阶跃后等待竖持姿态的窗口（ms） |
+| `pickup_still_ms` | 1000 | 抬手判定要求的"平放且静止"时长（ms） |
+| `pickup_tilt_pct` | 87 | "立起来了"阈值（存 87 = 重力在 z 轴上的占比 < 0.87，即倾斜约 30°） |
+| `pickup_hold_ms` | 200 | "立起来"需要保持的时长（ms） |
 
 - 各 key 读取失败或取值越界（合理范围见 `svc_imu.c`）时回落到上表默认值；默认值与原编译期常量等价，灵敏度不变
-- 摇晃与抬手的冷却时间（2000 ms / 3000 ms）是固定行为常量，不入 NVS
+- 摇晃与抬手的冷却时间（2000 ms / 3000 ms）与抬手的"平放"阈值 0.92 是固定行为常量，不入 NVS
 
 ## 12. 服务初始化顺序
 

@@ -90,7 +90,7 @@
 ## 3. 运行脚本
 
 ```
-[用户进入脚本管理器，选中一个脚本]
+[用户进入脚本管理，选中一个脚本]
         │
         ▼
 [app_scripts 调用 fw_script_run(path)]
@@ -109,7 +109,7 @@
               │
               ├─→ 释放脚本创建的界面对象、定时器、订阅
               ├─→ 发布 SVC_EVENT_SCRIPT_STOPPED
-              └─→ 回到脚本管理器
+              └─→ 回到脚本管理
 ```
 
 ## 4. 音乐播放
@@ -207,11 +207,11 @@
         │              └─→ periph_lcd_set_backlight(false)（只关背光，LCD 保持）
         │
         ▼
-[触摸 / 按键 / 晃动发生]
+[触摸 / 按键 / 抬手发生]
         │
         ├─→ 触摸 → SVC_EVENT_TOUCH
         │     按键 → fw_input 回调
-        │     晃动 → SVC_EVENT_IMU_*
+        │     抬手 → SVC_EVENT_IMU_PICKUP
         │           │
         │           └─→ svc_power 监听 → svc_power_wake()
         │                 │
@@ -220,13 +220,17 @@
         └─→ svc_power 重置超时计数
 ```
 
+摇晃 / 运动（`SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_MOTION`）**不唤醒**：太容易被碰到
+就亮屏。只保留抬手：设备平放且静止（|z 占比| ≥ 0.92）≥ 1 s 后，屏幕立起来（占比 ≤ 0.87，
+即倾斜约 30° 以上）并保持 200 ms，才发 `SVC_EVENT_IMU_PICKUP`。
+
 ## 8. 电源菜单（长按 BOOT）
 
 ```
-[BOOT 按键长按 1.5 s+]
+[BOOT 按键按住达 1.5 s]
         │
         ▼
-[periph_button 任务检测 LONG_PRESS]
+[drv_key 轮询任务在按住期间直接上报 LONG_PRESS（不用松手）]
         │
         ▼
 [fw_input 全局回调 → 弹出电源菜单浮层]

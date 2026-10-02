@@ -49,8 +49,9 @@ static void touch_activity_cb(periph_touch_evt_t evt, const periph_touch_point_t
     }
 }
 
-/* IMU 运动：只负责熄屏唤醒，不刷新活动时间，避免持续晃动导致屏幕一直亮 */
-static void imu_motion_cb(const svc_event_t *evt, void *user)
+/* IMU 抬手：只负责熄屏唤醒，不刷新活动时间（活动时间只由触摸 / 按键刷新）。
+ * 只订阅抬手，不订阅运动 / 摇晃：后两者太容易被碰到就触发，会导致熄屏后一碰就亮。 */
+static void imu_pickup_cb(const svc_event_t *evt, void *user)
 {
     (void)evt;
     (void)user;
@@ -100,7 +101,7 @@ esp_err_t svc_power_init(void)
     periph_lcd_set_brightness(bright);
 
     periph_touch_register_callback(touch_activity_cb, NULL);
-    svc_event_bus_subscribe(SVC_EVENT_IMU_MOTION, imu_motion_cb, NULL);
+    svc_event_bus_subscribe(SVC_EVENT_IMU_PICKUP, imu_pickup_cb, NULL);
     xTaskCreatePinnedToCore(power_task, "power_task", 3072, NULL, 2, NULL, 0);
 
     ESP_LOGI(TAG, "initialized (backlight timeout=%us, brightness=%u%%)",

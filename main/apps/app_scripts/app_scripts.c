@@ -13,6 +13,7 @@
 
 #include "app_scripts.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -195,7 +196,7 @@ static bool is_lua(const char *name)
            (p[3] == 'a' || p[3] == 'A');
 }
 
-/* 脚本管理器只列 .lua，链接没带扩展名时补上，否则下载完看不到 */
+/* 脚本管理只列 .lua，链接没带扩展名时补上，否则下载完看不到 */
 static void ensure_lua_ext(char *name, size_t len)
 {
     if (is_lua(name)) return;
@@ -404,7 +405,8 @@ static void scripts_on_destroy(void *ctx)
 
 const fw_app_desc_t app_scripts_desc = {
     .name = "Scripts",
-    .icon_64 = NULL,
+    .title = "脚本管理",
+    .icon_64 = &icon_home_scripts,
     .symbol = LV_SYMBOL_EDIT,
     .on_create = scripts_on_create,
     .on_start = scripts_on_start,

@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Image（APP-IMAGE 图片查看器）
+ * Apps - Image（APP-IMAGE 图库）
  *
  * 扫描 TF 卡 / 内置存储根目录的 PNG / JPEG / GIF / BMP，网格点选后全屏查看。
  * JPEG 由 LVGL 的 TJPGD 解码器支持（sdkconfig.defaults 已开 LV_USE_TJPGD）。
@@ -11,6 +11,7 @@
 
 #include "app_image.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -329,7 +330,8 @@ static bool image_on_back(void *ctx)
 
 const fw_app_desc_t app_image_desc = {
     .name = "Image",
-    .icon_64 = NULL,
+    .title = "图库",
+    .icon_64 = &icon_home_image,
     .symbol = LV_SYMBOL_IMAGE,
     .on_create = image_on_create,
     .on_destroy = image_on_destroy,

@@ -43,6 +43,9 @@ esp_err_t fw_init(void)
     lvgl_port_lock(0);
     lv_obj_set_clickable(lv_layer_top(), false);
     lv_obj_set_scrollable(lv_layer_top(), false);
+    /* 开机画面之前不允许出现任何界面元素：状态栏就挂在这层上，这里先藏起来，
+     * 等 fw_boot_animation() 收尾时再打开。放在建状态栏之前，避免它闪一下。 */
+    lv_obj_set_hidden(lv_layer_top(), true);
     lvgl_port_unlock();
 
     ESP_ERROR_CHECK(fw_theme_init());

@@ -22,7 +22,9 @@ extern "C" {
 /**
  * @brief 创建状态栏并订阅系统事件
  *
- * 状态栏为全局浮层，内含：返回 / 主页按钮、时间、状态图标（Wi-Fi / 音乐 / 蓝牙 / 亮度）。
+ * 状态栏为全局浮层，内含：返回 / 主页按钮、时间、状态图标
+ * （Wi-Fi / 蓝牙 / 声音 / 录音 / 摄像头 / TF 卡，常显，启用时高亮）。
+ * 各图标的绑定语义以 docs/03-design/02-ui-system.md 第 2 节为准。
  * 内部自行加 LVGL 锁。
  */
 esp_err_t fw_statusbar_init(void);
@@ -31,24 +33,19 @@ esp_err_t fw_statusbar_init(void);
 esp_err_t fw_statusbar_rebuild(void);
 
 /**
- * @brief 设置 Wi-Fi 图标
+ * @brief 设置 Wi-Fi 图标（连接时高亮）
  */
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);
 
 /**
- * @brief 设置音乐播放图标
+ * @brief 设置声音图标（播放中高亮）
  */
-esp_err_t fw_statusbar_set_music_playing(bool on);
+esp_err_t fw_statusbar_set_sound_playing(bool on);
 
 /**
- * @brief 设置蓝牙图标
+ * @brief 设置蓝牙图标（广播中或已连接时高亮，其余置灰）
  */
 esp_err_t fw_statusbar_set_bluetooth(bool on);
-
-/**
- * @brief 设置亮度图标（背光 0 时灰、<50% 次级色、>=50% 主色）
- */
-esp_err_t fw_statusbar_set_brightness(uint8_t percent);
 
 #ifdef __cplusplus
 }

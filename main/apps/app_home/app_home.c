@@ -3,7 +3,10 @@
  *
  * Apps - Home（桌面）
  *
- * 一屏 4×2 = 8 个应用图标（时钟在左上角第一个），超出可左右滑动翻页（lv_tileview）。
+ * 一屏 4×2 = 8 个应用格子，超出可左右滑动翻页（lv_tileview）。
+ * 每个格子：上方彩色图标（App 描述符的 icon_64），下方中文标题（描述符的 title），
+ * 标题居中、只占一行，放不下（超过 4 个汉字）由 LVGL 的 dots 模式换成 "..."。
+ * 标题顺序 = App 注册顺序（见 app_register.c，与原始需求「内置应用」列表一致）。
  * 顶部状态栏由 fw_statusbar 提供，不属于桌面内容。
  */
 
@@ -18,8 +21,9 @@ static const char *TAG = "app.home";
 #define HOME_COLS       4
 #define HOME_ROWS       2
 #define HOME_PER_PAGE   (HOME_COLS * HOME_ROWS)
-#define HOME_ITEM_W     70
-#define HOME_ITEM_H     86
+#define HOME_ITEM_W     73
+#define HOME_ITEM_H     76
+#define HOME_GAP        5      /* 格子间距 = 网格内边距 = 列间距 */
 #define HOME_APP_MAX    24
 
 static lv_obj_t *s_root = NULL;
@@ -42,20 +46,29 @@ static void add_cell(lv_obj_t *grid, const fw_app_desc_t *app)
         lv_obj_add_event_cb(cell, launch_cb, LV_EVENT_SHORT_CLICKED, (void *)app->name);
         lv_obj_set_style_bg_color(cell, fw_theme_color_bg_card(), 0);
 
-        lv_obj_t *icon = lv_label_create(cell);
-        lv_label_set_text(icon, app->symbol ? app->symbol : fw_asset_symbol_for(app->name));
-        lv_obj_set_style_text_font(icon, fw_asset_font_24(), 0);
-        lv_obj_set_style_text_color(icon, fw_theme_color_accent(), 0);
-        lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 12);
+        if (app->icon_64 != NULL) {
+            lv_obj_t *icon = lv_image_create(cell);
+            lv_image_set_src(icon, app->icon_64);
+            lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 7);
+        } else {
+            /* 兜底：没有彩色图标时退回内置符号 */
+            lv_obj_t *icon = lv_label_create(cell);
+            lv_label_set_text(icon, app->symbol ? app->symbol : fw_asset_symbol_for(app->name));
+            lv_obj_set_style_text_font(icon, fw_asset_font_24(), 0);
+            lv_obj_set_style_text_color(icon, fw_theme_color_accent(), 0);
+            lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 12);
+        }
 
+        /* 标题只占一行：宽度够放 4 个汉字 + "..."，放不下由 dots 模式截断 */
         lv_obj_t *label = lv_label_create(cell);
-        lv_label_set_text(label, app->name);
-        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(label, HOME_ITEM_W - 8);
+        lv_obj_set_width(label, HOME_ITEM_W - 2);
+        lv_obj_set_height(label, lv_font_get_line_height(fw_asset_font_cn()));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+        lv_label_set_text(label, app->title != NULL ? app->title : app->name);
         lv_obj_set_style_text_font(label, fw_asset_font_cn(), 0);
         lv_obj_set_style_text_color(label, fw_theme_color_text_secondary(), 0);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -8);
+        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -6);
     } else {
         cell = lv_obj_create(grid);
         lv_obj_set_clickable(cell, false);
@@ -69,6 +82,7 @@ static void add_cell(lv_obj_t *grid, const fw_app_desc_t *app)
     lv_obj_set_style_border_width(cell, 1, 0);
     lv_obj_set_style_border_color(cell, fw_theme_color_divider(), 0);
     lv_obj_set_style_shadow_width(cell, 0, 0);
+    lv_obj_set_style_pad_all(cell, 0, 0);
 }
 
 static void *home_on_create(void)
@@ -79,7 +93,8 @@ static void *home_on_create(void)
     lv_obj_set_scrollable(s_root, false);
     lv_obj_set_style_bg_color(s_root, fw_theme_color_bg_primary(), 0);
 
-    /* 收集除 Home 自身以外的 App（注册顺序即网格顺序，Clock 在左上角第一个） */
+    /* 收集除 Home 自身以外的 App：注册顺序即网格顺序（与原始需求「内置应用」列表一致，
+     * 脚本管理在左上角第一个） */
     const fw_app_desc_t *apps[HOME_APP_MAX];
     size_t n = fw_app_mgr_list(apps, HOME_APP_MAX);
     const fw_app_desc_t *items[HOME_APP_MAX];
@@ -105,7 +120,11 @@ static void *home_on_create(void)
         lv_obj_set_style_pad_all(tile, 0, 0);
 
         lv_obj_t *grid = fw_ui_grid(tile, HOME_COLS, HOME_ITEM_W, HOME_ITEM_H);
-        lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 6);
+        /* fw_ui_grid 的默认间距（列 8 / 内边距 6）偏大，桌面按自己的 HOME_GAP 收紧并把宽度算准 */
+        lv_obj_set_style_pad_all(grid, HOME_GAP, 0);
+        lv_obj_set_style_pad_column(grid, HOME_GAP, 0);
+        lv_obj_set_width(grid, HOME_COLS * HOME_ITEM_W + (HOME_COLS - 1) * HOME_GAP + 2 * HOME_GAP);
+        lv_obj_align(grid, LV_ALIGN_CENTER, 0, 0);
 
         for (size_t k = 0; k < HOME_PER_PAGE; k++) {
             size_t idx = p * HOME_PER_PAGE + k;
@@ -143,6 +162,7 @@ static void home_on_destroy(void *ctx)
 
 const fw_app_desc_t app_home_desc = {
     .name = "Home",
+    .title = "桌面",
     .icon_64 = NULL,
     .symbol = LV_SYMBOL_HOME,
     .on_create = home_on_create,

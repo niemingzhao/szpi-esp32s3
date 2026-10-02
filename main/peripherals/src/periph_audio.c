@@ -246,18 +246,17 @@ esp_err_t periph_audio_set_format(periph_audio_dir_t dir, const periph_audio_for
             return ESP_ERR_NOT_SUPPORTED;
         }
 
-        /* 录音：RX 固定 16-bit 立体声，只需切采样率（同一条 I2S 总线，时钟两边一起更） */
         if (fmt->bit_width != 16 || fmt->channels == 0 || fmt->channels > 2) {
             ESP_LOGE(TAG, "unsupported record format: %u bit / %u ch", fmt->bit_width, fmt->channels);
             return ESP_ERR_NOT_SUPPORTED;
         }
 
+        /* 录音：RX 固定 16-bit 立体声，只需切采样率。
+         * 时钟改由 audio_apply_clock() 在主通道（TX）上完成：全双工下 IDF 会把 RX 切成
+         * 从机、跟着同一条总线的 BCLK/WS 走，不需要（也不能）单独 reconfig RX 的时钟 ——
+         * i2s_channel_reconfig_tdm_clock() 要求通道先 disable，而 RX 一直在跑，
+         * 调用它会直接返回 ESP_ERR_INVALID_STATE，导致录音起不来。 */
         esp_err_t rerr = audio_apply_clock((uint32_t)fmt->sample_rate);
-        if (rerr == ESP_OK && s_rx != NULL) {
-            i2s_tdm_clk_config_t tdm_clk = I2S_TDM_CLK_DEFAULT_CONFIG((uint32_t)fmt->sample_rate);
-            tdm_clk.mclk_multiple = PERIPH_AUDIO_MCLK_MULT;
-            rerr = i2s_channel_reconfig_tdm_clock(s_rx, &tdm_clk);
-        }
         if (rerr == ESP_OK) {
             if (s_cfg_mux != NULL) xSemaphoreTake(s_cfg_mux, portMAX_DELAY);
             rerr = drv_es7210_set_sample_rate((uint32_t)fmt->sample_rate);

@@ -10,6 +10,7 @@
 
 #include "app_calc.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include <ctype.h>
@@ -313,7 +314,8 @@ static void calc_on_destroy(void *ctx)
 
 const fw_app_desc_t app_calc_desc = {
     .name = "Calculator",
-    .icon_64 = NULL,
+    .title = "计算器",
+    .icon_64 = &icon_home_calc,
     .symbol = LV_SYMBOL_LIST,
     .on_create = calc_on_create,
     .on_destroy = calc_on_destroy,

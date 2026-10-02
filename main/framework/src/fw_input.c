@@ -48,7 +48,7 @@ static void key_cb(periph_button_evt_t evt, void *user)
 
     /* 附加动作：把按键事件也发到事件总线，脚本订阅 "key" 即可收到。载荷是
      * uint8_t 的事件序号，与 periph_button_evt_t 的枚举顺序一致（0 单击 / 1 双击 /
-     * 2 长按 / 3 极长按），发到脚本侧就是一个 1 字节字符串。
+     * 2 长按），发到脚本侧就是一个 1 字节字符串。
      * svc_event_bus_publish() 按值拷贝，下面照旧走导航，互不影响。 */
     const uint8_t code = (uint8_t)evt;
     svc_event_bus_publish(SVC_EVENT_KEY, &code, sizeof(code));
@@ -67,7 +67,6 @@ static void key_cb(periph_button_evt_t evt, void *user)
         fw_app_mgr_back_to_home();
         break;
     case PERIPH_BTN_EVT_LONG_PRESS:
-    case PERIPH_BTN_EVT_VERY_LONG_PRESS:
         show_power_menu();
         break;
     default:

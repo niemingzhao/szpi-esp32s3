@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Music（APP-MUSIC 音乐播放器）
+ * Apps - Music（APP-MUSIC 音乐）
  *
  * 扫描 TF 卡（没有卡时退回内置 SPIFFS）根目录的 MP3 / WAV，列表点选播放；
  * 播放状态每 500 ms 从 svc_audio 读一次（见 AGENTS：svc_audio 的注册回调是单槽位，
@@ -11,6 +11,7 @@
 
 #include "app_music.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -393,7 +394,8 @@ static void music_on_destroy(void *ctx)
 
 const fw_app_desc_t app_music_desc = {
     .name = "Music",
-    .icon_64 = NULL,
+    .title = "音乐",
+    .icon_64 = &icon_home_music,
     .symbol = LV_SYMBOL_AUDIO,
     .on_create = music_on_create,
     .on_pause = music_on_pause,

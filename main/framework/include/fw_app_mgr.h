@@ -27,8 +27,9 @@ extern "C" {
  * 它同时作为 on_start / on_pause / on_resume / on_destroy / on_back 的 ctx 传入。
  */
 typedef struct {
-    const char *name;
-    const lv_image_dsc_t *icon_64;   /* 桌面图标，可为 NULL */
+    const char *name;              /* 内部标识（英文，启动 / 注册用） */
+    const char *title;             /* 界面显示名（中文），桌面网格使用 */
+    const lv_image_dsc_t *icon_64; /* 桌面图标，可为 NULL */
     const char *symbol;            /* LVGL 内置符号，icon_64 为 NULL 时使用 */
     void *(*on_create)(void);      /* 返回根屏对象 */
     void (*on_start)(void *ctx);

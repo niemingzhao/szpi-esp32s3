@@ -10,6 +10,7 @@
 
 #include "app_recorder.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -312,7 +313,8 @@ static void recorder_on_destroy(void *ctx)
 
 const fw_app_desc_t app_recorder_desc = {
     .name = "Recorder",
-    .icon_64 = NULL,
+    .title = "录音机",
+    .icon_64 = &icon_home_recorder,
     .symbol = LV_SYMBOL_AUDIO,
     .on_create = recorder_on_create,
     .on_pause = recorder_on_pause,

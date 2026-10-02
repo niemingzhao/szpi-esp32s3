@@ -308,7 +308,6 @@ typedef enum {
     PERIPH_BTN_EVT_CLICK,
     PERIPH_BTN_EVT_DOUBLE_CLICK,
     PERIPH_BTN_EVT_LONG_PRESS,
-    PERIPH_BTN_EVT_VERY_LONG_PRESS,
 } periph_button_evt_t;
 
 typedef void (*periph_button_cb_t)(periph_button_evt_t evt, void *user);
@@ -319,8 +318,10 @@ esp_err_t periph_button_register_callback(periph_button_cb_t cb, void *user);
 
 ### 10.2 内部实现要点
 
-- 调用 `drv_key_init()`：GPIO0 **任意边沿**中断 + 内部上拉
-- 驱动内部 `key_task`（优先级 4）做去抖与单击 / 双击 / 长按判定
+- 调用 `drv_key_init()`：GPIO0 输入 + 内部上拉，不用中断
+- 驱动内部 `key_task`（优先级 4）每 10 ms 采一次电平，连续 30 ms 稳定才认可一次
+  按下 / 松开（软件去抖），再做单击 / 双击 / 长按判定
+- 长按在按住期间达到 1.5 s 即上报，不等松手
 - 回调在 `key_task` 上下文执行
 
 ## 11. periph_ext（外扩接口）

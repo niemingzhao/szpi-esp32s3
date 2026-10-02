@@ -9,6 +9,7 @@
 
 #include "app_display.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -120,7 +121,8 @@ static void display_on_destroy(void *ctx)
 
 const fw_app_desc_t app_display_desc = {
     .name = "Display",
-    .icon_64 = NULL,
+    .title = "显示",
+    .icon_64 = &icon_home_display,
     .symbol = LV_SYMBOL_EYE_OPEN,
     .on_create = display_on_create,
     .on_destroy = display_on_destroy,

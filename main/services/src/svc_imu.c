@@ -32,15 +32,15 @@ static const char *TAG = "svc.imu";
 #define IMU_DEF_ORIENT_AXIS_G       60       /* 60 -> 0.60，重力在水平轴上的投影占比 */
 #define IMU_DEF_SHAKE_COUNT         3        /* 窗口内越阈次数 */
 #define IMU_DEF_SHAKE_WINDOW_MS     1000
-#define IMU_DEF_PICKUP_STILL_MS     2000
-#define IMU_DEF_PICKUP_STEP_G       35       /* 35 -> 0.35，阶跃相对 1 g 的比例 */
-#define IMU_DEF_PICKUP_HOLD_MS      800
+#define IMU_DEF_PICKUP_STILL_MS     1000     /* 抬手判定前要求的"平放且静止"时长 */
+#define IMU_DEF_PICKUP_TILT_PCT     87       /* 87 -> 0.87，重力在 z 轴上的占比小于它算"屏幕立起来了" */
+#define IMU_DEF_PICKUP_HOLD_MS      200      /* "立起来"要保持这么久才算数（滤掉磕碰引起的晃动） */
 
 /* 合理上限：配置超出即视为离谱，回落默认值（下限统一为 1） */
 #define IMU_ACC_PCT_MAX             500      /* 5.00 */
 #define IMU_GYRO_DPS_MAX            2000
 #define IMU_ORIENT_AXIS_MAX         100      /* 1.00 */
-#define IMU_PICKUP_STEP_MAX         200      /* 2.00 */
+#define IMU_PICKUP_TILT_MAX         100      /* 1.00 */
 #define IMU_SHAKE_COUNT_MAX         8
 #define IMU_WINDOW_MS_MAX           10000
 #define IMU_HOLD_MS_MAX             5000
@@ -48,15 +48,16 @@ static const char *TAG = "svc.imu";
 /* 固定行为常量（属于算法而非灵敏度，不暴露到 NVS） */
 #define IMU_SHAKE_COOLDOWN_MS       2000
 #define IMU_PICKUP_COOLDOWN_MS      3000
+#define IMU_PICKUP_FLAT_NZ          0.92f    /* |z 轴占比| 高于它算"平放"（约 23° 以内） */
 
 /*
  * 阈值缓存：任务启动时读一次，50 ms 轮询里不再碰 NVS。
- * 比例类（acc_pct / orient_axis_g / pickup_step_g）存的是 100 倍整数，读出来换算成浮点。
+ * 比例类（acc_pct / orient_axis_g / pickup_tilt_pct）存的是 100 倍整数，读出来换算成浮点。
  */
 static float s_motion_acc_g;        /* |合加速度 - 1 g| 的运动阈值（m/s²） */
 static float s_motion_gyro_dps;
 static float s_orient_axis;         /* 归一化比例，0~1 */
-static float s_pickup_step_g;       /* 阶跃阈值（m/s²） */
+static float s_pickup_tilt;         /* 归一化比例，0~1 */
 static uint32_t s_shake_window_ms;
 static uint8_t s_shake_count;
 static uint32_t s_pickup_still_ms;
@@ -83,23 +84,23 @@ typedef struct {
 } imu_shake_t;
 
 /*
- * 抬手检测状态：静止 pickup_still_ms → 出现一次合加速度相对 1 g 的阶跃（超过
- * pickup_step_g）→ pickup_hold_ms 内进入竖持（竖屏）姿态，三者依次满足才发布，
- * 之后进入 IMU_PICKUP_COOLDOWN_MS 冷却。
+ * 抬手（拿起设备）判定：
+ *   1) 设备"平放且静止"（|z 占比| ≥ IMU_PICKUP_FLAT_NZ、无运动）达 pickup_still_ms → 待命；
+ *   2) 待命期间屏幕立起来（|z 占比| ≤ pickup_tilt_pct，即倾斜约 30° 以上）并保持
+ *      pickup_hold_ms → 发布一次 SVC_EVENT_IMU_PICKUP，随后冷却 IMU_PICKUP_COOLDOWN_MS。
  *
- * 取舍：用"先静、再阶跃、后竖持"的次序而非单一阈值，避免普通晃动误触发；阶跃判的是
- * 合加速度幅值的偏差而不是 z 轴方向，因为加速度计轴向与安装方向相关，用幅值不依赖符号。
+ * 取舍：
+ *   - 不用加速度阶跃：手轻轻拿起时合加速度的阶跃远小于 0.35 g，根本摸不到。
+ *   - 不用纯运动 / 摇晃：放在桌上被碰到就会亮屏。
+ *   - 待命之后**不再重新累计"平放静止"**：缓慢拿起时中途会有停顿与抖动，若那时把状态
+ *     打回原形并重取基准，就再也测不到"立起来"了（这正是前几版慢拿不亮的原因）。
+ *   - 磕碰只会让设备在平放姿态附近晃一下，到不了倾斜阈值、也保持不住保持时长。
  */
-typedef enum {
-    IMU_PICK_IDLE = 0,            /* 等待连续静止 */
-    IMU_PICK_STILL,               /* 已静止达 pickup_still_ms，等待加速度阶跃 */
-    IMU_PICK_HOLD,                /* 已出现阶跃，等待竖持姿态 */
-} imu_pick_state_t;
-
 typedef struct {
-    imu_pick_state_t state;
-    uint32_t still_since;         /* 连续静止的起点 */
-    uint32_t step_at;             /* 阶跃发生的时刻 */
+    bool flat_rest;               /* 当前处于"平放且静止"段 */
+    bool armed;                   /* 平放静止够久，等一次"立起来" */
+    uint32_t flat_since;          /* 该段的起点 */
+    uint32_t tilt_since;          /* "立起来"的起点，0 = 当前未立起 */
     uint32_t cooldown_until;
 } imu_pickup_t;
 
@@ -145,17 +146,12 @@ static svc_imu_orientation_t imu_orientation_of(const periph_imu_data_t *d,
                               : SVC_IMU_ORIENTATION_LANDSCAPE_FLIP;
 }
 
-/* 竖持姿态：重力主要落在 ±y（竖屏），且屏幕不再平放（nz 小于阈值） */
-static bool imu_is_held_upright(const periph_imu_data_t *d)
+/* |重力在 z 轴上的占比|：平放时接近 1，立起来后接近 0 */
+static float imu_nz_ratio(const periph_imu_data_t *d)
 {
     const float acc_mag = imu_acc_mag(d);
-    if (acc_mag <= 0.01f) return false;
-
-    const float nx = fabsf(d->acc_x) / acc_mag;
-    const float ny = fabsf(d->acc_y) / acc_mag;
-    const float nz = fabsf(d->acc_z) / acc_mag;
-
-    return (nz < s_orient_axis) && (ny >= nx);
+    if (acc_mag <= 0.01f) return 0.0f;      /* 失重等异常读数按"已立起"处理 */
+    return fabsf(d->acc_z) / acc_mag;
 }
 
 static int32_t imu_cfg_i32(const char *key, int32_t def, int32_t min, int32_t max)
@@ -182,22 +178,22 @@ static void imu_load_cfg(void)
     const int32_t shake_n   = imu_cfg_i32("shake_count",     IMU_DEF_SHAKE_COUNT, 1, IMU_SHAKE_COUNT_MAX);
     const int32_t shake_win = imu_cfg_i32("shake_window_ms", IMU_DEF_SHAKE_WINDOW_MS, IMU_POLL_MS, IMU_WINDOW_MS_MAX);
     const int32_t still_ms  = imu_cfg_i32("pickup_still_ms", IMU_DEF_PICKUP_STILL_MS, IMU_POLL_MS, IMU_WINDOW_MS_MAX);
-    const int32_t step_g    = imu_cfg_i32("pickup_step_g",   IMU_DEF_PICKUP_STEP_G, 1, IMU_PICKUP_STEP_MAX);
+    const int32_t tilt_pct  = imu_cfg_i32("pickup_tilt_pct", IMU_DEF_PICKUP_TILT_PCT, 1, IMU_PICKUP_TILT_MAX);
     const int32_t hold_ms   = imu_cfg_i32("pickup_hold_ms",  IMU_DEF_PICKUP_HOLD_MS, IMU_POLL_MS, IMU_HOLD_MS_MAX);
 
     s_motion_acc_g    = (float)acc_pct / 100.0f * IMU_GRAVITY_MS2;
     s_motion_gyro_dps = (float)gyro_dps;
     s_orient_axis     = (float)orient / 100.0f;
-    s_pickup_step_g   = (float)step_g / 100.0f * IMU_GRAVITY_MS2;
+    s_pickup_tilt     = (float)tilt_pct / 100.0f;
     s_shake_count     = (uint8_t)shake_n;
     s_shake_window_ms = (uint32_t)shake_win;
     s_pickup_still_ms = (uint32_t)still_ms;
     s_pickup_hold_ms  = (uint32_t)hold_ms;
 
-    ESP_LOGI(TAG, "cfg: acc=%d%% gyro=%d dps orient=%d%% shake=%u/%u ms still=%u ms step=%d%% hold=%u ms",
+    ESP_LOGI(TAG, "cfg: acc=%d%% gyro=%d dps orient=%d%% shake=%u/%u ms still=%u ms tilt=%d%% hold=%u ms",
              (int)acc_pct, (int)gyro_dps, (int)orient,
              (unsigned)s_shake_count, (unsigned)s_shake_window_ms,
-             (unsigned)s_pickup_still_ms, (int)step_g, (unsigned)s_pickup_hold_ms);
+             (unsigned)s_pickup_still_ms, (int)tilt_pct, (unsigned)s_pickup_hold_ms);
 }
 
 static void imu_shake_expire(imu_shake_t *s, uint32_t now, uint32_t window)
@@ -251,43 +247,44 @@ static bool imu_shake_update(imu_shake_t *s, const periph_imu_data_t *d,
 }
 
 static bool imu_pickup_update(imu_pickup_t *s, const periph_imu_data_t *d,
-                              bool moving, bool upright, uint32_t now)
+                              bool moving, uint32_t now)
 {
+    const float nz = imu_nz_ratio(d);
+
     if (s->cooldown_until != 0 && (int32_t)(now - s->cooldown_until) < 0) {
-        s->state = IMU_PICK_IDLE;
+        /* 冷却期：清掉待命，重新从"平放静止"开始计时 */
+        s->armed = false;
+        s->tilt_since = 0;
+        s->flat_rest = (!moving && nz >= IMU_PICKUP_FLAT_NZ);
+        if (s->flat_rest) s->flat_since = now;
         return false;
     }
 
-    const float acc_dev = fabsf(imu_acc_mag(d) - IMU_GRAVITY_MS2);
-
-    switch (s->state) {
-    case IMU_PICK_IDLE:
-        if (!moving) {
-            s->still_since = now;
-            s->state = IMU_PICK_STILL;
+    /* 平放且静止：累计时长，够久就"待命" */
+    if (!moving && nz >= IMU_PICKUP_FLAT_NZ) {
+        if (!s->flat_rest) {
+            s->flat_rest = true;
+            s->flat_since = now;
+        } else if ((uint32_t)(now - s->flat_since) >= s_pickup_still_ms) {
+            s->armed = true;
         }
-        break;
+        s->tilt_since = 0;
+        return false;
+    }
 
-    case IMU_PICK_STILL:
-        if (acc_dev > s_pickup_step_g &&
-            (uint32_t)(now - s->still_since) >= s_pickup_still_ms) {
-            s->step_at = now;                      /* 静止够久后的一次阶跃 */
-            s->state = IMU_PICK_HOLD;
-        } else if (moving) {
-            s->state = IMU_PICK_IDLE;              /* 普通移动打断静止，重新计时 */
-        }
-        break;
+    /* 离开"平放静止"：不重开计时、也不改基准，只等"立起来" */
+    s->flat_rest = false;
 
-    case IMU_PICK_HOLD:
-        if (upright) {                             /* 阶跃后进入竖持姿态 */
-            s->state = IMU_PICK_IDLE;
+    if (s->armed && nz <= s_pickup_tilt) {
+        if (s->tilt_since == 0) s->tilt_since = now;
+        if ((uint32_t)(now - s->tilt_since) >= s_pickup_hold_ms) {
+            s->armed = false;
+            s->tilt_since = 0;
             s->cooldown_until = now + IMU_PICKUP_COOLDOWN_MS;
             return true;
         }
-        if ((uint32_t)(now - s->step_at) > s_pickup_hold_ms) {
-            s->state = IMU_PICK_IDLE;              /* 超时未竖起，放弃本轮 */
-        }
-        break;
+    } else {
+        s->tilt_since = 0;
     }
 
     return false;
@@ -317,7 +314,6 @@ static void imu_task(void *arg)
             const uint32_t now = imu_now_ms();
             const bool moving = imu_is_moving(&data);
             const svc_imu_orientation_t orientation = imu_orientation_of(&data, last_orientation);
-            const bool upright = imu_is_held_upright(&data);
 
             s_moving = moving;
             s_orientation = orientation;
@@ -343,7 +339,7 @@ static void imu_task(void *arg)
                 ESP_LOGI(TAG, "shake (%u)", (unsigned)shake_count);
             }
 
-            if (imu_pickup_update(&pickup, &data, moving, upright, now)) {
+            if (imu_pickup_update(&pickup, &data, moving, now)) {
                 /* 抬手事件无负载（NULL/0），订阅方按事件 ID 判断即可 */
                 svc_event_bus_publish(SVC_EVENT_IMU_PICKUP, NULL, 0);
                 ESP_LOGI(TAG, "pickup");

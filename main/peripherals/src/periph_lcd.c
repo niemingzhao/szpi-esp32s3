@@ -114,9 +114,11 @@ esp_err_t periph_lcd_init(void)
     /* 用带错误处理的 flush 回调（见上） */
     lv_display_set_flush_cb(s_disp, periph_lcd_flush_cb);
 
-    /* 默认屏幕设为深色，避免 LVGL 默认浅色主题导致白屏 */
+    /* 默认屏幕设为纯黑：它会在开机画面之前显示约 0.6 s（背光已亮、Logo 还没上屏），
+     * 必须是黑的，不要用页面底色，否则开机瞬间会像"露出桌面"。
+     * 同时它也是开机画面结束后、桌面淡入前的那一帧背景。 */
     if (lvgl_port_lock(0)) {
-        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x121212), 0);
+        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
         lvgl_port_unlock();
     }
 

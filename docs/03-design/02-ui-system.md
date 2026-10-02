@@ -24,50 +24,72 @@ UI 系统基于 LVGL 9 + esp_lvgl_port 2.x，由 Framework 层统一封装。
 
 - 状态栏是唯一常驻浮层，承担全局导航（返回 / 主页）
 - 没有底部虚拟按键栏，也不使用滑动手势
-- 开机时状态栏随浮层一起隐藏，先全屏展示 Logo 与提示音
+- 开机时状态栏随浮层一起隐藏：`fw_init()` 在创建状态栏**之前**就把 `lv_layer_top()` 藏起来，默认屏底色是纯黑，因此背光点亮后到 Logo 上屏之间只显示黑屏，不会先闪出状态栏或桌面元素（见 AGENTS 4.27）
 
 ## 2. fw_statusbar（状态栏）
+
+状态栏是唯一的常驻浮层，同时承担全局导航与状态显示。下面的布局、图标语义、触发条件都是**固定设计**：改状态栏前先改本节，再改代码。
 
 ### 2.1 布局
 
 ```
 ┌────────────────────────────────────────────────────┐
-│ [返回][主页]    10:30     [摄][卡][录][亮][蓝牙][声][Wi-Fi] │
+│ [返回][主页]   10:30   [Wi-Fi][蓝牙][声音][录音][摄像头][TF 卡] │
 └────────────────────────────────────────────────────┘
-   左：返回 / 主页    中：时间（偏左）    右：状态图标
+   左：返回 / 主页    中：时间（偏左）    右：状态图标（常显）
 ```
 
-右侧状态图标从右往左依次为：Wi-Fi（`x=-10`）、音乐（`-30`）、蓝牙（`-50`）、
-亮度（`-70`）、录音（`-90`）、TF 卡（`-110`）、摄像头（`-130`），相邻右边缘间距
-20 px。时间不再对齐屏幕正中，而是居中于左按钮组与右侧图标组之间的可用区域：左按钮
-组右缘在 80 px，摄像头左缘在 176 px，中点约 128 px，故用 `LV_ALIGN_CENTER` 加
-`x=-32`。时钟最宽约 39 px（`23:59`）时右缘约 148 px，与摄像头左缘留出约 28 px，
-与主页按钮右缘也留约 28 px，320 px 下不重叠。
+| 元素 | 规格 |
+|------|------|
+| 状态栏 | 高 28（`FW_STATUSBAR_H`），底色 `bg_secondary`，底部 1 px `border` 线 |
+| 返回 / 主页按钮 | 32 × 20，`bg_card` + 圆角 6，`LV_ALIGN_LEFT_MID`，`x = 8` / `48`，`lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
+| 时间 | `LV_ALIGN_CENTER` + `x = -32`（左按钮组与右图标组之间可用区的中点约 126 px），`text_primary`；未同步显示 `--:--` |
+| 状态图标 | 6 个，20 × 20，`LV_ALIGN_RIGHT_MID`，`x = -128 / -104 / -80 / -56 / -32 / -8`（右边缘间距 24 px），全部常显 |
 
-### 2.2 接口
+间距校验：左按钮组右缘 80 px，最靠左的 Wi-Fi 图标左缘 172 px；时钟最宽 `23:59` 约 39 px、右缘约 148 px，两侧各留 24 px 以上，320 px 下不重叠。
+
+### 2.2 状态图标语义（固定）
+
+六个图标**全部常显、都不接受点击**（导航只由左侧两个按钮承担）。统一配色：高亮 `accent`，置灰 `text_disabled`，不存在第二种高亮色。每个图标只绑定**一个**状态：
+
+| 图标 | 资源 | 绑定状态 | 高亮条件 | 置灰条件 | 即时更新来源 |
+|------|------|----------|----------|----------|--------------|
+| Wi-Fi | `icon_status_wifi` | 已连上 AP | `svc_net_get_status().wifi_connected` 为真 | 未连接 / 连接中 / 连接失败 | `SVC_EVENT_WIFI_CONNECTED`、`SVC_EVENT_WIFI_DISCONNECTED` |
+| 蓝牙 | `icon_status_bt` | 广播中或已连接 | `svc_bt_get_state()` 为 `ADVERTISING` 或 `CONNECTED` | `OFF`、`READY`（协议栈就绪但未广播） | `SVC_EVENT_BT_STATE_CHANGED` |
+| 声音 | `icon_status_sound` | 扬声器在放音 | `svc_audio_get_state()` 为 `PLAYING` | `IDLE`、`PAUSED`、`RECORDING` | `SVC_EVENT_AUDIO_PLAYBACK_STARTED` / `FINISHED` |
+| 录音 | `icon_status_record` | 麦克风在收音 | `svc_audio_get_state()` 为 `RECORDING` | 非录音状态 | `SVC_EVENT_AUDIO_RECORD_STARTED` / `FINISHED` |
+| 摄像头 | `icon_status_camera` | 摄像头已打开 | `svc_camera_is_open()` 为真 | 未打开 / 打开失败 | `SVC_EVENT_CAMERA_STATE_CHANGED`（负载 `bool`） |
+| TF 卡 | `icon_status_sd` | 卡可用（已挂载且仍能访问） | 挂载成功 | 无卡 / 挂载失败 / 卡不可访问 | `SVC_EVENT_SD_MOUNTED`、`SVC_EVENT_SD_UNMOUNTED` |
+
+固定约定：
+
+- 声音 / 录音绑定的就是 `svc_audio` 的状态机。系统里所有放音与收音都经 `svc_audio`（App、脚本、开机提示音），所以 `PLAYING` / `RECORDING` 等价于"扬声器 / 麦克风正在被调用"；暂停（`PAUSED`）不算在用。
+- 蓝牙只认 `ADVERTISING` / `CONNECTED`；`READY` 表示协议栈已就绪但用户把广播关了，必须置灰。
+- Wi-Fi 只看连接与否，信号强度（`fw_statusbar_set_wifi()` 的 `rssi` 形参）目前不用。
+- TF 卡的"可用"由 `svc_storage` 的热插拔轮询判定：拔出约 1 s 内反映，插入最长约 10 s（没卡时每 10 次轮询才尝试挂载一次，避免 IDF 挂载失败日志每秒刷屏）。**这是有意为之，不要改成秒级。**
+- 每秒兜底同步（见 2.4）只是保险；正常路径都由上表的即时事件驱动。
+
+### 2.3 接口
 
 ```c
 esp_err_t fw_statusbar_init(void);
 esp_err_t fw_statusbar_rebuild(void);
 
 esp_err_t fw_statusbar_set_wifi(int8_t rssi, bool connected);
-esp_err_t fw_statusbar_set_music_playing(bool on);
+esp_err_t fw_statusbar_set_sound_playing(bool on);
 esp_err_t fw_statusbar_set_bluetooth(bool on);
-esp_err_t fw_statusbar_set_brightness(uint8_t percent);
 ```
 
-录音与 TF 卡图标由状态栏内部订阅事件维护（不导出 setter）。
+只导出这三个 setter（供事件处理器复用）；录音、摄像头、TF 卡图标由状态栏内部订阅事件维护，不导出 setter。
 
-### 2.3 实现要点
+### 2.4 实现要点
 
-- 订阅事件更新图标：`SVC_EVENT_TIME_CHANGED`、`SVC_EVENT_WIFI_*`、`SVC_EVENT_BT_STATE_CHANGED`、`SVC_EVENT_AUDIO_PLAYBACK_*`、`SVC_EVENT_AUDIO_RECORD_*`、`SVC_EVENT_SD_*`、`SVC_EVENT_BRIGHTNESS_CHANGED`
-- 图标语义：Wi-Fi 连接 / 蓝牙非 OFF 时点亮（主色文字），否则置灰；音乐播放时显示主色，停止时隐藏；亮度按背光百分比分三档；录音中显示红点（`error`），结束隐藏；TF 卡挂载时点亮、卸载置灰；摄像头打开时用强调色、关闭时置灰
-- 摄像头图标不新增事件，由状态栏已有的 1 s `lv_timer` 顺带查一次 `svc_camera_is_open()` 刷新
-- 左侧返回 / 主页按钮分别调用 `fw_app_mgr_back()` / `fw_app_mgr_back_to_home()`；`fw_app_mgr_back()` 会先询问当前 App 的 `on_back()`（用于 App 内返回上一级页面）
-- 状态栏高度由 `FW_STATUSBAR_H` 定义；App 内容区与浮层都以此为顶部偏移
-- 状态栏按钮用 `lv_obj_set_ext_click_area()` 向四周扩大触摸区域（视觉尺寸不变），弥补面板触摸与显示位置的微小偏差
-- 蓝牙图标跟随 BLE 状态：`svc_bt_get_state() != SVC_BT_STATE_OFF` 时点亮
-- 重建时用 `svc_audio_get_state()` / `svc_storage_get_info()` / `svc_camera_is_open()` 同步一次真实状态（事件在订阅之前发布过也不会漏）
+- 图标资源是白色 + alpha 的 20×20 自绘图（造型见 5.3），运行时用 `lv_obj_set_style_image_recolor()` + `recolor_opa = LV_OPA_COVER` 染色。`icon_set_on()` 在颜色没变时直接返回，所以每秒兜底不会造成无谓重绘。
+- 深色 / 浅色主题共用同一份图标资源：换主题时 `fw_statusbar_rebuild()` 重建控件，`statusbar_build()` 末尾按真实状态重新套一遍（`svc_net_get_status()` / `svc_bt_get_state()` / `svc_audio_get_state()` / `svc_camera_is_open()` / `svc_storage_get_info()`），保证订阅之前发生的状态变化不会漏。
+- 1 s `lv_timer` 做两件事：刷新时间；把 Wi-Fi / 蓝牙 / 声音 / 录音 / 摄像头五个图标按真实状态重新同步一次（兜底）。TF 卡不在轮询里（查容量要访问文件系统，代价大）。
+- 订阅清单：`SVC_EVENT_TIME_SYNCED` / `TIME_CHANGED` / `TIMEZONE_CHANGED`、`WIFI_CONNECTED` / `WIFI_DISCONNECTED`、`BT_STATE_CHANGED`、`AUDIO_PLAYBACK_STARTED` / `FINISHED`、`AUDIO_RECORD_STARTED` / `FINISHED`、`CAMERA_STATE_CHANGED`、`SD_MOUNTED` / `SD_UNMOUNTED`。
+- 左侧按钮：返回 → `fw_app_mgr_back()`（先询问当前 App 的 `on_back()`），主页 → `fw_app_mgr_back_to_home()`。
+- 状态栏高度由 `FW_STATUSBAR_H` 定义；App 内容区与浮层都以此为顶部偏移。
 
 ## 3. 主题系统
 
@@ -157,12 +179,33 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
 
 ### 5.2 图标
 
-- 优先 LVGL 内置 symbol（`LV_SYMBOL_PLAY` / `LV_SYMBOL_PAUSE` 等）
-- 自定义图标：用 LVGLImage.py 从 PNG 生成 C 数组
+- 状态栏图标：6 个自绘的 20×20 图标（Wi-Fi / 蓝牙 / 声音 / 录音 / 摄像头 / TF 卡），
+  白色图形 + alpha，运行时用 `image_recolor` 染色；绑定语义见第 2.2 节，造型见 5.3
+- 卡片与列表内的功能性图标：LVGL 内置 symbol（`LV_SYMBOL_LEFT` / `LV_SYMBOL_HOME` 等）
+- 桌面 App 图标：自绘彩色图标（见 5.3）
 
-### 5.3 图标清单（22 个 App）
+### 5.3 图标资源
 
-每个 App 一个 64×64 图标，作为 C 数组编译进固件；桌面图标用内置符号兜底。
+两组自绘图标都由 Pillow 脚本生成（4 倍超采样后 LANCZOS 缩小），RGB565 按小端存放：
+
+| 资源 | 尺寸 / 格式 | 生成脚本 | 用途 |
+|------|-------------|----------|------|
+| `icons_home.c` / `fw_home_icons.h` | 40×40，RGB565A8，彩色 | `tools/gen_home_icons.py` | 桌面 22 个 App 彩色图标 |
+| `icons_status.c` / `fw_status_icons.h` | 20×20，RGB565A8，白色 + alpha | `tools/gen_status_icons.py` | 状态栏 6 个图标（运行时染色） |
+
+桌面图标由 App 描述符的 `icon_64` 指向；状态栏图标由 `fw_statusbar` 直接用
+`icon_status_*`。两组资源的生成脚本都能单独重跑，改完不要手工改字节序。
+
+状态栏 6 个图标的造型（固定，从 `gen_status_icons.py` 里改完重跑）：
+
+| 图标 | 造型 |
+|------|------|
+| Wi-Fi | 三道弧 + 底部圆点 |
+| 蓝牙 | 蓝牙符文：竖线 + 上下两个折角 |
+| 声音 | 喇叭（梯形箱体 + 锥面）+ 两道声波弧 |
+| 录音 | 麦克风：胶囊拾音头 + 半圆托架 + 支杆与底座 |
+| 摄像头 | 相机机身（圆角矩形）+ 顶部取景器凸起 + 镜头环（环心留高光点） |
+| TF 卡 | 缺角卡形 + 三条触点槽 |
 
 ## 6. 桌面
 
@@ -172,6 +215,7 @@ lv_obj_t *fw_ui_grid(lv_obj_t *parent, uint8_t cols, lv_coord_t item_w, lv_coord
 // main/apps/app_home/app_home.c
 const fw_app_desc_t app_home_desc = {
     .name = "Home",
+    .title = "桌面",
     .icon_64 = NULL,
     .symbol = LV_SYMBOL_HOME,
     .on_create = home_on_create,
@@ -180,7 +224,11 @@ const fw_app_desc_t app_home_desc = {
 ```
 
 桌面内容区：
-- 一屏 4×2 = 8 个应用图标（`lv_tileview`，超出可左右滑动翻页），图标顺序即 App 注册顺序
+- 一屏 4×2 = 8 个应用格子（`lv_tileview`，超出可左右滑动翻页），顺序即 App 注册顺序
+  （与原始需求「内置应用」列表一致，见 `app_register.c`）
+- 每个格子 73×76：上方 40×40 彩色图标（描述符 `icon_64`），下方中文名称（描述符 `title`）居中显示
+- 名称只占一行：宽度按"4 个汉字 + `...`"预留（约 71 px），放不下由 `LV_LABEL_LONG_MODE_DOTS` 换成 `...`
+- 网格内边距与列间距都是 5 px，整体在内容区里垂直居中
 - 状态栏（fw_statusbar）挂在 `lv_layer_top()` 上，由 `fw_init()` 创建，不随屏幕切换消失
 - 桌面根屏同时是 fw_app_mgr 返回栈的栈底
 
@@ -215,7 +263,7 @@ const fw_app_desc_t app_home_desc = {
 | 长按 | 弹出菜单 / 删除 |
 | 滑动 | 不使用（列表 / 桌面翻页除外） |
 | 状态栏按钮 | 返回、主页 |
-| 状态栏图标 | 时间、Wi-Fi、音乐、蓝牙、亮度、录音、TF 卡、摄像头（见第 2 节） |
+| 状态栏图标 | 时间、Wi-Fi、蓝牙、声音、录音、摄像头、TF 卡（见第 2 节） |
 
 ## 10. LVGL 集成要点
 
@@ -293,11 +341,11 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 |------|------|
 | 状态栏 | 高 28（`FW_STATUSBAR_H`），底部 1 px 线 |
 | 状态栏按钮 | 32 × 20，另加 `lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
-| 状态栏位置 | 左：返回 x=8、主页 x=48；中：时间 `LV_ALIGN_CENTER` x=-32（居中于左按钮组与右图标组之间）；右：状态图标从右往左排（Wi-Fi -10、音乐 -30、蓝牙 -50、亮度 -70、录音 -90、TF 卡 -110、摄像头 -130），间距 20 |
+| 状态栏位置 | 左：返回 x=8、主页 x=48；中：时间 `LV_ALIGN_CENTER` x=-32；右：状态图标从左往右排（Wi-Fi -128、蓝牙 -104、声音 -80、录音 -56、摄像头 -32、TF 卡 -8），间距 24，全部常显（权威规格与语义见第 2 节） |
 | 页面内边距 | 12（内容区 `pad_all`），行间距 8（`pad_row`） |
 | 入口卡片 / 列表项 | 高 50 / 高 38 |
-| 桌面格子 | 70 × 86，4 列，列间距 8，网格整体上边距 6 |
-| 对话框 | 面板 268 × 156；正文宽 244；按钮行 244 × 40 贴底；按钮 88 × 34 |
+| 桌面格子 | 73 × 76，4 列，列间距与网格内边距均为 5，网格垂直居中 |
+| 对话框 | 面板 268 × 156；正文宽 244；按钮行 240 × 36 贴底；按钮在行内均分（间距 8） |
 | Toast | 宽 272，距底部 44 |
 | 通用组件 | 进度条面板 240 × 72；列表容器内边距 8、行距 4 |
 
@@ -316,7 +364,7 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 
 - 页面底 `bg_primary`；状态栏 `bg_secondary`；卡片、按钮、列表、Toast、对话框 `bg_card`
 - 正文 `text_primary`；说明与次要信息 `text_secondary`；禁用态 `text_disabled`
-- 主色 `accent` 只用于：图标、滑块指示条与圆点、主按钮（如对话框"确定"）、状态栏播放图标
+- 主色 `accent` 只用于：图标、滑块指示条与圆点、主按钮（如对话框"确定"）、状态栏高亮图标
 - 分隔线 `divider` 用于列表内分隔与桌面空槽描边；`border` 用于卡片 / 按钮 / 描边与状态栏底线
 - 语义色 `success` / `warning` / `error` 只用于状态提示与告警
 - 两套主题都必须完整可用：控件一律显式设色（见 3.1），不依赖 LVGL 自带主题
@@ -325,7 +373,7 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 
 - 中文正文 14 px（`fw_asset_font_cn()`），标题 16 px（`fw_asset_font_cn_large()`）
 - 拉丁与数字：`fw_asset_font_14()` / `fw_asset_font_20()` / `fw_asset_font_24()`
-- 图标尺寸：状态栏 14，卡片与列表 20，桌面 24；优先用 LVGL 内置 `LV_SYMBOL_*`
+- 图标尺寸：状态栏 20×20（自绘，染色），桌面 40×40（自绘彩色），卡片与列表内的功能性图标 20（LVGL 内置 `LV_SYMBOL_*`）
 - 界面文案的汉字必须在字体子集内（见 5.1），改完跑 `python tools/check_cn_text.py`
 
 ### 12.5 交互约定

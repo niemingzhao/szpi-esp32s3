@@ -8,12 +8,12 @@
 |------|----------|------|
 | 语言 | C | Lua 5.5 |
 | 存放 | 编译进固件（`main/apps/`） | TF 卡脚本目录 |
-| 注册 | `fw_app_mgr_register()` | 脚本管理器扫描目录 |
+| 注册 | `fw_app_mgr_register()` | 脚本管理 App 扫描目录 |
 | 生命周期 | create / start / pause / resume / destroy / back | 加载 / 执行 / 停止 |
 | 入口 | `fw_app_mgr_launch("Name")` | `fw_script_run(path)` |
 | 能力 | Framework + Services | 通过绑定访问 Framework / Services / `svc_io` |
 
-两者共用事件总线、配置系统与存储；桌面只展示原生 App，脚本统一在脚本管理器里运行。
+两者共用事件总线、配置系统与存储；桌面只展示原生 App，脚本统一在脚本管理 App 里运行。
 
 ## 2. 原生 App 模板
 
@@ -26,8 +26,10 @@ main/apps/app_clock/
 ├── app_clock.h           # App 头文件（可选）
 ├── app_clock.c           # App 主体
 └── assets/               # App 私有资源（可选）
-    └── icon_64.c         # 桌面图标
 ```
+
+桌面图标不放在 App 目录里：22 个图标集中在 `main/framework/assets/icons_home.c`
+（由 `tools/gen_home_icons.py` 生成），App 用描述符的 `icon_64` 引用。
 
 新增 App 时把目录加进 `main/apps/CMakeLists.txt` 的 `SRC_DIRS` / `INCLUDE_DIRS`。
 
@@ -69,6 +71,8 @@ static void on_destroy(void *ctx)
 
 const fw_app_desc_t app_clock_desc = {
     .name = "Clock",
+    .title = "时钟",
+    .icon_64 = &icon_home_clock,
     .symbol = LV_SYMBOL_BELL,
     .on_create = on_create,
     .on_start = on_start,
@@ -76,6 +80,9 @@ const fw_app_desc_t app_clock_desc = {
     .on_destroy = on_destroy,
 };
 ```
+
+描述符字段：`name` 是内部标识（英文，启动 / 注册用），`title` 是界面显示名（中文，
+桌面网格用），`icon_64` 是桌面彩色图标，`symbol` 只在没有 `icon_64` 时兜底。
 
 `on_back(ctx)` 为可选字段：返回 `true` 表示"返回"已在 App 内处理（例如回到上一级页面），`fw_app_mgr` 不再退出到上一级；返回 `false` 或未提供 `on_back` 则退出到上一级（通常是桌面）。状态栏返回键与 BOOT 单击都走这条路径，App 不要自己做返回按钮。
 
@@ -218,7 +225,8 @@ void app_register_all(void)
 }
 ```
 
-注册顺序即桌面图标顺序（Home 之外）。
+注册顺序即桌面格子顺序（Home 之外），必须与原始需求「内置应用」列表一致；
+新增 App 时插到对应位置，不要只追加到末尾。
 
 ## 7. App 之间通信
 
@@ -261,14 +269,14 @@ ESP_LOGE(TAG, "Failed to parse: %s", input);
 5. **配置项用 svc_settings，命名空间用 App 名（如 App 天气用 `weather`）**
 6. **错误必须优雅处理**（不崩溃，用 `fw_ui_toast()` 提示）
 7. **资源路径用绝对路径**：`/sdcard/...` 或 `/internal/...`
-8. **图标 64×64，编译进固件**
+8. **图标与显示名走描述符**：`icon_64` 引用 `main/framework/assets/icons_home.c` 里的彩色图标，`title` 用原始需求「内置应用」里的中文名称
 9. **App 内部子页用显示 / 隐藏切换 + `on_back`**：一个 App 只占一张 LVGL 屏，子页做成根对象里的容器；"返回"统一由状态栏返回键触发
 
 ## 10. 脚本模型
 
 ### 10.1 存放与元信息
 
-- 脚本放在 TF 卡脚本目录，由脚本管理器（`app_scripts`）扫描
+- 脚本放在 TF 卡脚本目录，由脚本管理（`app_scripts`）扫描
 - 每个脚本可带一段元信息（名称 / 说明 / 入口），没有则用文件名
 - 内置示例脚本随固件打包，首次启动释放到脚本目录（同名不覆盖）
 - 支持通过链接下载脚本到脚本目录
@@ -305,7 +313,7 @@ Lua 侧以模块（全局表）的形式暴露能力，模块名与函数清单�
 | `sys` | `uptime` / `now` / `localtime` / `mem`（`mem` 返回内部 SRAM 剩余 / 历史最低与 PSRAM 剩余，单位字节） |
 | `timer` | `every` |
 | `input` | `on_click`（订阅触摸点击）；BOOT 键事件请用 `event.subscribe("key", fn)` |
-| `event` | `subscribe` / `publish`；固定事件名见实现里的 EVENT_MAP（触摸 / BOOT 按键（`key`）/ IMU 姿态与运动 / Wi-Fi / 蓝牙状态 / 亮度 / TF 卡挂载 / 录音结束 / 脚本启停），另有 `user.` 开头的自定义事件名，同一名字稳定映射到同一事件号。`key` 的回调参数是 1 字节字符串，`string.byte(v)` 得事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按 |
+| `event` | `subscribe` / `publish`；固定事件名见实现里的 EVENT_MAP（触摸 / BOOT 按键（`key`）/ IMU 姿态与运动 / Wi-Fi / 蓝牙状态 / 亮度 / TF 卡挂载 / 录音结束 / 脚本启停），另有 `user.` 开头的自定义事件名，同一名字稳定映射到同一事件号。`key` 的回调参数是 1 字节字符串，`string.byte(v)` 得事件序号：0 单击 / 1 双击 / 2 长按 |
 | `io` | `gpio_write` / `gpio_read` / `pwm_set` / `pwm_stop` / `adc_read` / `i2c_write` / `i2c_read` / `uart_config` / `uart_write` / `uart_read` |
 | `file` | `read` / `write` / `remove` / `exists` / `list` |
 | `audio` | `play` / `stop` / `tone`（`tone(freq_hz[, ms])`，默认 200 ms 的提示音）/ `record_start` / `record_stop` / `get_volume` / `set_volume` / `set_mute` |

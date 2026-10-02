@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - File（APP-FILE 文件管理器）
+ * Apps - File（APP-FILE 文件管理）
  *
  * 浏览 TF 卡（/sdcard）与内置 SPIFFS（/internal）：目录可进可退，文件按类型显示图标
  * 与大小；点文件跳到对应 App（音频→Music，图片→Image，文本→Editor，其它给提示）。
@@ -10,6 +10,7 @@
 
 #include "app_file.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -422,7 +423,8 @@ static bool file_on_back(void *ctx)
 
 const fw_app_desc_t app_file_desc = {
     .name = "File",
-    .icon_64 = NULL,
+    .title = "文件管理",
+    .icon_64 = &icon_home_file,
     .symbol = LV_SYMBOL_DIRECTORY,
     .on_create = file_on_create,
     .on_destroy = file_on_destroy,

@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - IMU（APP-IMU 姿态传感器显示）
+ * Apps - IMU（APP-IMU 姿态仪）
  */
 
 #pragma once

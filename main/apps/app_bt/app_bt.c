@@ -13,6 +13,7 @@
 
 #include "app_bt.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -272,7 +273,8 @@ static void bt_on_destroy(void *ctx)
 
 const fw_app_desc_t app_bt_desc = {
     .name = "BT",
-    .icon_64 = NULL,
+    .title = "蓝牙 BLE",
+    .icon_64 = &icon_home_bt,
     .symbol = LV_SYMBOL_BLUETOOTH,
     .on_create = bt_on_create,
     .on_start = bt_on_start,

@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Editor（APP-EDITOR 文本编辑器）
+ * Apps - Editor（APP-EDITOR 文本编辑）
  *
  * 纯文本编辑：打开 TF 卡 / 内置存储里的 .txt（整块读，上限 8 KB），软键盘输入
  * （LVGL 自带键盘，只有拉丁字符；中文没有输入法，中文内容靠打开已有文件显示），
@@ -10,6 +10,7 @@
 
 #include "app_editor.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -371,7 +372,8 @@ static bool editor_on_back(void *ctx)
 
 const fw_app_desc_t app_editor_desc = {
     .name = "Editor",
-    .icon_64 = NULL,
+    .title = "文本编辑",
+    .icon_64 = &icon_home_editor,
     .symbol = LV_SYMBOL_EDIT,
     .on_create = editor_on_create,
     .on_destroy = editor_on_destroy,

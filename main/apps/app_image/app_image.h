@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Image（APP-IMAGE 图片查看器）
+ * Apps - Image（APP-IMAGE 图库）
  */
 
 #pragma once

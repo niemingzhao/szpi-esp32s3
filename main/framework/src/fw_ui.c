@@ -13,6 +13,7 @@
 static const char *TAG = "fw.ui";
 
 #define FW_DIALOG_BTN_MAX   4
+#define FW_DIALOG_BTN_GAP   8     /* 对话框按钮之间的间距 */
 
 typedef struct {
     lv_obj_t *scrim;
@@ -177,14 +178,27 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
     }
 
     lv_obj_t *row = lv_obj_create(panel);
-    lv_obj_set_size(row, 244, 40);
+    lv_obj_set_size(row, 240, 36);
     lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_scrollable(row, false);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, FW_DIALOG_BTN_GAP, 0);   /* 按钮之间的间距 */
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+
+    /* 按钮在行内均分（先数出个数，宽度写死，不依赖 flex grow 的剩余空间算法） */
+    uint8_t total = 0;
+    for (size_t i = 0; i < sizeof(k_btn_order) / sizeof(k_btn_order[0]); i++) {
+        if ((buttons & k_btn_order[i]) == 0) continue;
+        if (total >= FW_DIALOG_BTN_MAX) break;
+        total++;
+    }
+    if (total == 0) total = 1;
+    const lv_coord_t btn_w =
+        (240 - (lv_coord_t)(total - 1) * FW_DIALOG_BTN_GAP) / (lv_coord_t)total;
 
     uint8_t n = 0;
     for (size_t i = 0; i < sizeof(k_btn_order) / sizeof(k_btn_order[0]); i++) {
@@ -193,8 +207,9 @@ lv_obj_t *fw_ui_dialog(lv_obj_t *parent, const char *title, const char *msg,
 
         bool primary = (k_btn_order[i] == FW_DIALOG_BTN_OK);
 
+        /* 形状与状态栏返回 / 主页按钮一致（圆角卡片 + 描边），宽度按行内均分 */
         lv_obj_t *btn = lv_button_create(row);
-        lv_obj_set_size(btn, 88, 34);
+        lv_obj_set_size(btn, btn_w, 34);
         lv_obj_set_style_radius(btn, 8, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
         /* 显式设色：不能依赖 LVGL 自带主题（它只在启动时定一次） */

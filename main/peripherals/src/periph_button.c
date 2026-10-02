@@ -22,8 +22,7 @@ static void key_evt_wrapper(drv_key_evt_t evt, void *user)
     switch (evt) {
         case DRV_KEY_EVT_CLICK:          periph_evt = PERIPH_BTN_EVT_CLICK;          break;
         case DRV_KEY_EVT_DOUBLE_CLICK:   periph_evt = PERIPH_BTN_EVT_DOUBLE_CLICK;   break;
-        case DRV_KEY_EVT_LONG_PRESS:      periph_evt = PERIPH_BTN_EVT_LONG_PRESS;      break;
-        case DRV_KEY_EVT_VERY_LONG_PRESS: periph_evt = PERIPH_BTN_EVT_VERY_LONG_PRESS; break;
+        case DRV_KEY_EVT_LONG_PRESS:     periph_evt = PERIPH_BTN_EVT_LONG_PRESS;     break;
         default: return;
     }
     s_cb(periph_evt, s_user_data);

@@ -14,6 +14,7 @@
 
 #include "app_clock.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -251,7 +252,8 @@ static void clock_on_destroy(void *ctx)
 
 const fw_app_desc_t app_clock_desc = {
     .name = "Clock",
-    .icon_64 = NULL,
+    .title = "时钟",
+    .icon_64 = &icon_home_clock,
     .symbol = LV_SYMBOL_BELL,
     .on_create = clock_on_create,
     .on_pause = clock_on_pause,

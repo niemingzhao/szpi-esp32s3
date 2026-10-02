@@ -16,6 +16,7 @@
 
 #include "app_camera.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -353,7 +354,8 @@ static void camera_on_destroy(void *ctx)
 
 const fw_app_desc_t app_camera_desc = {
     .name = "Camera",
-    .icon_64 = NULL,
+    .title = "相机",
+    .icon_64 = &icon_home_camera,
     .symbol = LV_SYMBOL_IMAGE,
     .on_create = camera_on_create,
     .on_pause = camera_on_pause,

@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Editor（APP-EDITOR 文本编辑器）
+ * Apps - Editor（APP-EDITOR 文本编辑）
  */
 
 #pragma once

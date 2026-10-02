@@ -191,8 +191,7 @@ esp_err_t drv_ledc_set_brightness(uint8_t percent);
 typedef enum {
     DRV_KEY_EVT_CLICK,          // 单击
     DRV_KEY_EVT_DOUBLE_CLICK,   // 双击
-    DRV_KEY_EVT_LONG_PRESS,     // 长按 (>1.5 s)
-    DRV_KEY_EVT_VERY_LONG_PRESS, // 极长按 (>3 s)
+    DRV_KEY_EVT_LONG_PRESS,     // 长按（按住期间达到 1.5 s 即触发）
 } drv_key_evt_t;
 
 /**

@@ -48,7 +48,7 @@ typedef enum {
     /* 电源事件 */
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
-    /* BOOT 键事件（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按） */
+    /* BOOT 键事件（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按） */
     SVC_EVENT_KEY,
     SVC_EVENT_SHUTDOWN_REQUEST,
 
@@ -64,6 +64,9 @@ typedef enum {
     SVC_EVENT_AUDIO_PLAYBACK_ERROR,
     SVC_EVENT_AUDIO_RECORD_STARTED,
     SVC_EVENT_AUDIO_RECORD_FINISHED,
+
+    /* 摄像头事件（负载为 bool：true = 已打开） */
+    SVC_EVENT_CAMERA_STATE_CHANGED,
 
     /* 脚本事件 */
     SVC_EVENT_SCRIPT_STARTED,

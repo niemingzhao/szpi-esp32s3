@@ -8,6 +8,7 @@
 
 #include "app_sound.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -102,7 +103,8 @@ static void sound_on_destroy(void *ctx)
 
 const fw_app_desc_t app_sound_desc = {
     .name = "Sound",
-    .icon_64 = NULL,
+    .title = "声音",
+    .icon_64 = &icon_home_sound,
     .symbol = LV_SYMBOL_AUDIO,
     .on_create = sound_on_create,
     .on_destroy = sound_on_destroy,

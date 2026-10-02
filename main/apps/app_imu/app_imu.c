@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - IMU（APP-IMU 姿态传感器显示）
+ * Apps - IMU（APP-IMU 姿态仪）
  *
  * 每 150 ms 读一次 QMI8658（走 svc_imu）：上面是水平仪（圆 + 气泡随倾角移动），
  * 下面是三轴角度、加速度原始值与运动 / 朝向状态。只显示，不记录。
@@ -9,6 +9,7 @@
 
 #include "app_imu.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -162,7 +163,8 @@ static void imu_on_destroy(void *ctx)
 
 const fw_app_desc_t app_imu_desc = {
     .name = "IMU",
-    .icon_64 = NULL,
+    .title = "姿态仪",
+    .icon_64 = &icon_home_imu,
     .symbol = LV_SYMBOL_GPS,
     .on_create = imu_on_create,
     .on_pause = imu_on_pause,

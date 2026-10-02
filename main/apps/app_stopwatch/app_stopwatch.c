@@ -10,6 +10,7 @@
 
 #include "app_stopwatch.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -282,7 +283,8 @@ static void stopwatch_on_destroy(void *ctx)
 
 const fw_app_desc_t app_stopwatch_desc = {
     .name = "Stopwatch",
-    .icon_64 = NULL,
+    .title = "秒表",
+    .icon_64 = &icon_home_stopwatch,
     .symbol = LV_SYMBOL_PLAY,
     .on_create = stopwatch_on_create,
     .on_start = stopwatch_on_start,

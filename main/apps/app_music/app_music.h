@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2026 SZPI-OS
  *
- * Apps - Music（APP-MUSIC 音乐播放器）
+ * Apps - Music（APP-MUSIC 音乐）
  */
 
 #pragma once

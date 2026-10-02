@@ -11,6 +11,7 @@
 
 #include "app_download.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -281,7 +282,8 @@ static void download_on_destroy(void *ctx)
 
 const fw_app_desc_t app_download_desc = {
     .name = "Download",
-    .icon_64 = NULL,
+    .title = "下载器",
+    .icon_64 = &icon_home_download,
     .symbol = LV_SYMBOL_DOWNLOAD,
     .on_create = download_on_create,
     .on_destroy = download_on_destroy,

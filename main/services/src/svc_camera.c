@@ -49,6 +49,9 @@ esp_err_t svc_camera_open(svc_camera_format_t fmt, svc_camera_size_t size)
     s_open = true;
     ESP_LOGI(TAG, "opened (%s, size %d)",
              (fmt == SVC_CAMERA_FMT_JPEG) ? "JPEG" : "RGB565", (int)size);
+
+    const bool opened = true;
+    svc_event_bus_publish(SVC_EVENT_CAMERA_STATE_CHANGED, &opened, sizeof(opened));
     return ESP_OK;
 }
 
@@ -58,6 +61,9 @@ esp_err_t svc_camera_close(void)
 
     s_frame_held = false;
     s_open = false;
+
+    const bool opened = false;
+    svc_event_bus_publish(SVC_EVENT_CAMERA_STATE_CHANGED, &opened, sizeof(opened));
     return periph_camera_deinit();
 }
 

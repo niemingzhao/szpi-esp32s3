@@ -14,12 +14,13 @@ extern "C" {
 
 /**
  * @brief 按键事件类型
+ *
+ * 长按在按住期间达到阈值即上报，不需要等松手。
  */
 typedef enum {
     PERIPH_BTN_EVT_CLICK,
     PERIPH_BTN_EVT_DOUBLE_CLICK,
     PERIPH_BTN_EVT_LONG_PRESS,
-    PERIPH_BTN_EVT_VERY_LONG_PRESS,
 } periph_button_evt_t;
 
 /**

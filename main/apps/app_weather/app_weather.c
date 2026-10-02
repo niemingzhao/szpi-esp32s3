@@ -13,6 +13,7 @@
 
 #include "app_weather.h"
 #include "fw_common.h"
+#include "fw_home_icons.h"
 #include "svc_common.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -601,7 +602,8 @@ static void weather_on_destroy(void *ctx)
 
 const fw_app_desc_t app_weather_desc = {
     .name = "Weather",
-    .icon_64 = NULL,
+    .title = "天气",
+    .icon_64 = &icon_home_weather,
     .symbol = LV_SYMBOL_TINT,
     .on_create = weather_on_create,
     .on_destroy = weather_on_destroy,

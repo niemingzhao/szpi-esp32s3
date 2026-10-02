@@ -322,7 +322,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 | "标签 + 滑块"一行 | `fw_ui_slider_row()` |
 | 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
 | 主题色 | 只用 `fw_theme_color_*()`（见 4.13） |
-| 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`、`fw_asset_symbol_for(app_name)` |
+| 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`；状态栏图标是 `fw_status_icons.h` 里的 `icon_status_*`（20×20 白色 + alpha，运行时 `image_recolor` 染色，6 个图标的绑定语义见 `docs/03-design/02-ui-system.md` 第 2 节）；桌面彩色图标是 `fw_home_icons.h` 里的 `icon_home_*`；卡片内的功能性图标用 LVGL `LV_SYMBOL_*` / `fw_asset_symbol_for(app_name)`（两个图标生成脚本见 `tools/`） |
 | LVGL 显示图片 / GIF（按文件路径） | `fw_asset_fs_path()` 转成 `"A:/sdcard/..."` 再给 `lv_image_set_src()` |
 | 目录遍历 | `svc_storage_iter_start/next/end`（`iter_next` 返回的是内部缓冲，用完必须马上拷走） |
 | 整块读写小文件（编辑器的文本、相机的 BMP） | `svc_storage_read/write/remove/exists`（读上限 1 MB） |
@@ -347,6 +347,22 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 做法（见 `svc_sysinfo.c`）：用"当前任务是否已在本函数里"判断重入（`xTaskGetCurrentTaskHandle()` 与保存的 owner 比对，重入直接 `return 0`），行缓冲放**静态区**而不是调用者栈上，并且**剩余栈不足时不抄录**（`uxTaskGetStackHighWaterMark(NULL) < 512` 就跳过）—— `vsnprintf` 的栈开销算在调用者头上，BTC_TASK（3072 B，被 Bluedroid 日志吃到临界）实测会被压爆栈。
 
 界面侧配套的坑：**不要在定时刷新的页面上放超大自动换行标签**：超大的 `LV_LABEL_LONG_WRAP` 标签会让 LVGL 任务长时间卡在字体布局与 glyph 查询上，把同核的 `svc_imu` 饿死 → 看门狗 abort。这类页面只显示最近 512 B、刷新间隔 3 s、不自动滚动。
+
+### 4.24 BOOT 键用轮询 + 稳定性去抖，不要改回边沿中断
+
+`drv_key` 每 10 ms 采一次 GPIO0，电平连续 30 ms 不变才认可一次按下 / 松开。早期版本用 `GPIO_INTR_ANYEDGE` + 松手时计时：触点抖动会被误判成"第二次按下"，**单击会丢失、双击要按得很重才认**，而且长按只能等松手才判定。现在长按（1.5 s）**在按住期间**上报，`fw_input` 立刻弹电源菜单；交互映射固定为单击 → 返回上一级、双击 → 回桌面、长按 → 电源菜单（PRD IN-003）。
+
+### 4.25 图片资源的 RGB565 字节序必须是小端
+
+`image_lckfb_logo.c`、`icons_home.c` 与 `icons_status.c` 里的 RGB565 平面按**小端**存放，因为 `periph_lcd_flush_cb()` 会在送屏前把整块缓冲再交换一次。资源若按大端生成，屏幕上会得到 R/B 互换的错色（开机 Logo 曾如此）。用 `tools/gen_home_icons.py` / `tools/gen_status_icons.py` 这类脚本重新生成时不要手工改字节序。
+
+### 4.26 I2S 改时钟只能在主机通道做，且通道必须先 disable
+
+`i2s_channel_reconfig_std_clock()` / `i2s_channel_reconfig_tdm_clock()` 要求通道处于 disable 状态，否则直接返回 `ESP_ERR_INVALID_STATE`（IDF 日志：`I2S should be disabled before reconfiguring the clock`）。全双工下 IDF 会把 RX 切成从机、跟着同一条总线的 BCLK/WS 走，所以录音侧**不要**单独 reconfig RX 的时钟 —— 只改主机（TX）的时钟 + 对应 codec 的采样率寄存器即可（见 `periph_audio_set_format()`）。踩这个坑的表现是：录音机按下去没反应、状态栏麦克风图标不亮（录音根本没起来）。
+
+### 4.27 开机画面之前不能出现任何界面元素
+
+背光在 `periph_lcd_init()` 末尾就点亮了，而 Logo 要等 `fw_boot_animation()` 才上屏，中间约 0.6 s。这段必须只显示黑屏：`fw_init()` 在建状态栏**之前**把 `lv_layer_top()` 藏起来（状态栏、Toast、对话框都挂在这一层），由 `fw_boot_animation()` 收尾时再打开；`periph_lcd_init()` 把默认屏底色设成**纯黑**（不要用页面底色 `bg_primary`）。少做任何一件，开机时就会先露出状态栏或深灰底，看起来像"先闪一下桌面"。新增开屏前的初始化代码时，不要往 `lv_layer_top()` 或活动屏上放可见控件。
 
 ---
 
@@ -443,7 +459,7 @@ App / 脚本 调用 `svc_audio_play(&src)` → svc_audio 的 play_task → VFS �
 
 ### 脚本运行
 
-脚本管理器选脚本 → `fw_script_run(path)` → `script_task` 加载 Lua → 脚本经绑定调用界面 / Services / `svc_io` → 停止或异常退出 → 释放资源、发布 `SVC_EVENT_SCRIPT_STOPPED`
+脚本管理 App 选脚本 → `fw_script_run(path)` → `script_task` 加载 Lua → 脚本经绑定调用界面 / Services / `svc_io` → 停止或异常退出 → 释放资源、发布 `SVC_EVENT_SCRIPT_STOPPED`
 
 ### 配置持久化
 
@@ -451,7 +467,7 @@ App / 脚本 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC
 
 ### IMU 运动 / 姿态
 
-`svc_imu` 任务（50 ms 轮询；QMI8658 中断引脚未引出）→ 判定姿态变化 / 摇晃 / 抬手 → 发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION` / `SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_PICKUP` → `svc_power` 熄屏时唤醒
+`svc_imu` 任务（50 ms 轮询；QMI8658 中断引脚未引出）→ 判定姿态变化 / 摇晃 / 抬手 → 发布 `SVC_EVENT_IMU_MOTION` / `SVC_EVENT_IMU_ORIENTATION` / `SVC_EVENT_IMU_SHAKE` / `SVC_EVENT_IMU_PICKUP` → `svc_power` 熄屏时由**抬手**唤醒（只订阅 `SVC_EVENT_IMU_PICKUP`；判据是"平放静止 ≥ 1 s 后屏幕立起来（约 30° 以上）并保持 200 ms"，摇晃 / 运动不唤醒，避免碰到就亮屏）
 
 详细见 `docs/03-design/04-data-flow.md`。
 

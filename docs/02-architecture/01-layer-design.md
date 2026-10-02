@@ -152,9 +152,10 @@ esp_err_t svc_io_pwm_set(uint8_t gpio, uint32_t freq_hz, uint8_t duty_percent);
 
 ```c
 typedef struct {
-    const char *name;
-    const lv_image_dsc_t *icon_64;
-    const char *symbol;
+    const char *name;              /* 内部标识（英文） */
+    const char *title;             /* 界面显示名（中文） */
+    const lv_image_dsc_t *icon_64; /* 桌面彩色图标 */
+    const char *symbol;            /* 无 icon_64 时的符号兜底 */
     void *(*on_create)(void);
     void  (*on_start)(void *ctx);
     void  (*on_pause)(void *ctx);
@@ -202,6 +203,8 @@ static void on_destroy(void *ctx)
 
 const fw_app_desc_t app_xxx_desc = {
     .name = "Xxx",
+    .title = "某某",
+    .icon_64 = &icon_home_xxx,
     .symbol = LV_SYMBOL_FILE,
     .on_create = on_create,
     .on_destroy = on_destroy,
@@ -270,7 +273,7 @@ typedef enum {
     /* 电源 */
     SVC_EVENT_BRIGHTNESS_CHANGED,
     SVC_EVENT_TOUCH,
-    /* BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按 / 3 极长按） */
+    /* BOOT 键（负载为 uint8_t 事件序号：0 单击 / 1 双击 / 2 长按） */
     SVC_EVENT_KEY,
     SVC_EVENT_SHUTDOWN_REQUEST,
 
