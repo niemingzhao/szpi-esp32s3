@@ -811,7 +811,7 @@ esp_err_t svc_http_post(const char *url, const char *body, char *resp_buf, size_
 
 /* ------------------------------ 异步 GET ------------------------------ */
 
-#define SVC_HTTP_URL_MAX      256
+#define SVC_HTTP_URL_MAX      512    /* 天气请求实测 367 字节，256 会直接 INVALID_SIZE */
 #define SVC_HTTP_TASK_STACK   6144
 #define SVC_HTTP_ASYNC_TIMEOUT_MS  15000
 

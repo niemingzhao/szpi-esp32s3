@@ -335,6 +335,8 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 
 两条硬约束：**App 不直接调 IDF / Peripherals / Drivers**（缺接口就往 Services 加薄封装）；**不要在 App 里加大块 static 缓冲**（内部 RAM 只有十几 KB 余量，见 4.20）。
 
+页面的整体风格（单屏、头部行、主信息卡、详情格、无数据占位、浮层）照 `docs/03-design/02-ui-system.md` **12.6 节**来 —— 那是时钟 / 日历 / 天气三个 App 沉淀下来的套路，别自创一套。
+
 ### 4.22 脚本系统的边界
 
 - 运行时、脚本管理、能力绑定都在 `fw_script`；脚本硬件能力一律经 `svc_io`，**不直接调 Peripherals / Drivers**。
@@ -390,6 +392,16 @@ LVGL 9.6 里 `lv_obj_is_valid()` 只是 `lv_obj_is_in_widget_tree()` 的别名�
 所以在 `on_pause` 里 `lv_timer_pause()` 的 App，必须把恢复逻辑**同时挂到 `on_start` 和 `on_resume`**（时钟 App 就是一个函数挂两处）。只挂 `on_resume` 的典型症状：第一次进 App 秒数正常跳，用主页键回桌面再点进来就永远停在那一秒 —— 界面看着完全正常，只是不再刷新。
 
 框架侧也做了兜底：`app_launch()` 发现"App 已创建、只是不在返回栈里"时，`on_start` 之后会补一次 `on_resume`。两边都写，是为了以后改框架时不再踩。
+
+### 4.30 App 里的异步 HTTP 请求
+
+`svc_http_get_async()` 每次调用都新建一个临时任务（栈 6 KB，只能用内部 RAM），回调在 `svc.http` 任务里执行。写这类 App 注意：
+
+- 回调里碰 LVGL 必须 `lvgl_port_lock()`；**请求类型通过 `user` 传进去**，别用共享的静态变量（两个请求一起飞时会错位）。
+- 响应缓冲是调用方的内存：**同时只发一个请求**（一个 busy 标志），否则两个请求会往同一个缓冲里写；也顺带省一个 6 KB 栈的任务。
+- 缓冲**不要随 App 一起释放**：请求在飞的时候 App 可能因为换主题被 `on_destroy` + `on_create`，释放就是 use-after-free（任务还在往里写）。天气 App 的做法是缓冲首次分配后常驻。
+- URL 有长度上限（`SVC_HTTP_URL_MAX`，现在 512）：Open-Meteo 的天气请求渲染出来 367 字节，超了会被 `ESP_ERR_INVALID_SIZE` 拒掉（表现是"请求失败"，城市搜索却正常，因为那条只有 92 字节）。
+- 回调触发时 UI 指针可能已经是 NULL（App 销毁过）：每个写 UI 的地方都要判空。
 
 ---
 

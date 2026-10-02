@@ -374,6 +374,7 @@ esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
 - 保存一份凭据到 NVS，支持自动重连；连接失败重试若干次后停止并发布 `SVC_EVENT_WIFI_CONNECT_FAILED`
 - 开启 PMF capable（兼容 WPA3）
 - HTTP 客户端用 `esp_http_client`，HTTPS 走 mbedTLS
+- `svc_http_get_async()` 每次调用新建一个临时任务（栈 6 KB，只能用内部 RAM），回调在 `svc.http` 任务里执行（界面自己加 LVGL 锁）。**URL 上限 `SVC_HTTP_URL_MAX` = 512 字节**（天气请求实测 367）：超了直接返回 `ESP_ERR_INVALID_SIZE`；响应缓冲由调用方提供，请求在飞的时候不能释放（见 AGENTS 4.30）
 
 ## 8. svc_bt（蓝牙服务）
 
