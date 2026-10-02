@@ -207,6 +207,25 @@ static void *clock_on_create(void)
 }
 ```
 
+### 5.1 多页面 App：容器显隐 + on_back
+
+App 只有一块根屏（`fw_window` 只认它），所以 App 内部的多级页面要在根屏里建几块同尺寸容器，
+用 `lv_obj_set_hidden()` 切换，返回键交给 `on_back` 处理（时钟 App 的主页 / 设置页 / 时区页就是这么做的）：
+
+```c
+static bool clock_on_back(void *ctx)
+{
+    if (s_page_cur == PAGE_MAIN) return false;   /* 主页：返回 false 交给框架退出 App */
+    show_page(PAGE_MAIN);
+    return true;                                 /* 子页面：已处理，留在 App 内 */
+}
+```
+
+- 容器切换只改显隐、不删对象，所以在按钮回调里切换页面是安全的（不会删掉"正在处理事件的控件"）。
+- 需要重建的内容（如时钟 App 的时区网格）才在进入页面时 `lv_obj_clean()` 重建；重建的是容器里的子对象，不是按下事件所在的控件。
+- 长列表直接放进页面里那块可滚动容器，不要再套一层可滚动容器：两层都能滚时，拖动先落到内层，用户不知道滚的是哪一个。
+- "每秒刷新"的界面用固定周期轮询 + 判断要显示的值有没有变（时钟 App 是 100 ms 轮询、对比秒数），不要用 `lv_timer_set_period()` 去对齐整秒相位：它会改写定时器的 `last_run`，行为依赖 LVGL 内部实现，出问题很难查。
+
 ## 6. App 注册机制
 
 `main/apps/src/app_register.c` 集中注册：

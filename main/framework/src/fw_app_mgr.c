@@ -133,7 +133,8 @@ static esp_err_t app_launch(const char *name)
     }
 
     fw_app_slot_t *a = &s_slots[idx];
-    if (!a->created) {
+    const bool newly = !a->created;
+    if (newly) {
         a->root = (lv_obj_t *)a->desc->on_create();
         if (a->root == NULL) {
             lvgl_port_unlock();
@@ -151,6 +152,10 @@ static esp_err_t app_launch(const char *name)
         if (a->desc->on_resume) a->desc->on_resume(a->ctx);
     } else {
         if (a->desc->on_start) a->desc->on_start(a->ctx);
+        /* 之前创建过、只是不在返回栈里（用主页键回桌面后再点进来，或 App 之间跳转）：
+         * on_resume 也要给 —— 在 on_pause 里停掉刷新定时器的 App 只靠 on_start 不会
+         * 恢复，界面看着正常但不再刷新（时钟停跳就是这个原因）。 */
+        if (!newly && a->desc->on_resume) a->desc->on_resume(a->ctx);
     }
 
     fw_window_switch_to(a->root, LV_SCR_LOAD_ANIM_FADE_IN, FW_APP_ANIM_MS);
@@ -335,13 +340,18 @@ esp_err_t fw_app_mgr_rebuild_all(void)
         a->ctx = a->root;
     }
 
-    /* 重建当前前台 App：先 on_pause 退订，避免 on_start 里重复订阅 */
+    /* 重建当前前台 App：先 on_pause（退订 / 停刷新）再恢复前台状态。
+     * on_start 与 on_resume 都要给：用 on_start 订阅的 App（Wi-Fi、蓝牙、日志等）
+     * 靠 on_pause 退订，用 on_pause / on_resume 的 App（时钟、音乐、姿态仪、相机、
+     * 录音机等）靠 on_pause 暂停刷新定时器 —— 只调 on_start 会让后者的定时器一直
+     * 停着，界面看着"活着"其实不再刷新。 */
     lv_obj_t *target = NULL;
     if (s_top >= 0) {
         fw_app_slot_t *a = &s_slots[s_stack[s_top]];
         if (a->created) {
             if (a->desc->on_pause != NULL) a->desc->on_pause(a->ctx);
             if (a->desc->on_start != NULL) a->desc->on_start(a->ctx);
+            if (a->desc->on_resume != NULL) a->desc->on_resume(a->ctx);
             target = a->root;
         }
     }

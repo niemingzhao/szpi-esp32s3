@@ -43,7 +43,7 @@ UI 系统基于 LVGL 9 + esp_lvgl_port 2.x，由 Framework 层统一封装。
 |------|------|
 | 状态栏 | 高 28（`FW_STATUSBAR_H`），底色 `bg_secondary`，底部 1 px `border` 线 |
 | 返回 / 主页按钮 | 32 × 20，`bg_card` + 圆角 6，`LV_ALIGN_LEFT_MID`，`x = 8` / `48`，`lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
-| 时间 | `LV_ALIGN_CENTER` + `x = -32`（左按钮组与右图标组之间可用区的中点约 126 px），`text_primary`；未同步显示 `--:--` |
+| 时间 | `LV_ALIGN_CENTER` + `x = -32`（左按钮组与右图标组之间可用区的中点约 126 px），`text_primary`；未同步显示 `--:--`；12 / 24 小时制跟随 `svc_time_get_24h()`（与时钟 App 共用 `sys/clock_24h`） |
 | 状态图标 | 6 个，20 × 20，`LV_ALIGN_RIGHT_MID`，`x = -128 / -104 / -80 / -56 / -32 / -8`（右边缘间距 24 px），全部常显 |
 
 间距校验：左按钮组右缘 80 px，最靠左的 Wi-Fi 图标左缘 172 px；时钟最宽 `23:59` 约 39 px、右缘约 148 px，两侧各留 24 px 以上，320 px 下不重叠。
@@ -147,6 +147,8 @@ lv_color_t fw_theme_color_accent(void);
 | 进度条 | 长操作反馈（下载 / 文件复制 / 加载） |
 | 对话框 | 二次确认 / 警告 / 信息提示 |
 | Toast | 短提示（自动消失） |
+
+Toast 与对话框同一时刻只保留一个：新的 Toast 会顶掉旧的（不然连续点几下会叠成一摞）。两者的句柄都在对象的 `LV_EVENT_DELETE` 回调里清掉，连带挂在对象上的定时器一起删 —— 不要用 `lv_obj_is_valid()` 去判断"对象还在不在"（见 AGENTS 4.28）。
 | 列表 | 设置项 / 文件浏览 |
 | 网格 | 应用图标 / 图片缩略图 |
 | 页面 / 整行入口 / 滑块行 | `fw_ui_page()` / `fw_ui_row_btn()` / `fw_ui_slider_row()`，界面页面的标准骨架（规格见 12.1） |

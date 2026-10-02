@@ -184,6 +184,7 @@ esp_err_t svc_time_init(void);
 
 esp_err_t svc_time_sync_ntp(void);
 esp_err_t svc_time_set_timezone(const char *tz);   // "CST-8"
+esp_err_t svc_time_get_timezone(char *buf, size_t len);
 esp_err_t svc_time_set_manual(int64_t ts);
 
 bool svc_time_is_synced(void);
@@ -191,11 +192,17 @@ int64_t svc_time_now(void);                        // epoch 秒
 
 esp_err_t svc_time_format(int64_t ts, const char *fmt, char *buf, size_t len);
 // fmt 同 strftime："%H:%M"、"%-m月%-d日" 等
+
+bool svc_time_get_24h(void);                       // NVS：sys/clock_24h
+esp_err_t svc_time_set_24h(bool on);
 ```
 
-- `ntp_sync_task`（优先级 2，核心 0）每 6 小时同步一次，成功后发布 `SVC_EVENT_TIME_SYNCED`
+- 12 / 24 小时制放在服务里而不是时钟 App 里：状态栏也要跟着变，两边读同一个设置
+- 时间持久化：每秒把当前可信时间存进 **RTC 保留内存**（`RTC_NOINIT_ATTR`，软件复位 / panic / 看门狗不丢、掉电才丢），启动时用 `epoch + esp_timer` 已运行时间接着走（误差 < 1 s）。本板没有电池 RTC，掉电后仍要从 1970 开始，需要重新校时或联网同步
+- `ntp_sync_task`（优先级 2，核心 0）启动 5 s 后同步一次，之后每 6 小时定时同步一次（无网络时内部直接返回 `ESP_ERR_INVALID_STATE`）；连上 Wi-Fi 时 `wifi_connected_cb` 还会立刻触发一次
+- 成功后发布 `SVC_EVENT_TIME_SYNCED`；`svc_time_set_manual()` 也发布它（手动校时同样算"时间可信"）
 - 每分钟发布 `SVC_EVENT_TIME_CHANGED`
-- 用 `esp_netif_sntp` + `esp_sntp`
+- 用 `esp_netif_sntp` + `esp_sntp`；时钟 App 的「立即同步网络时间」就是再调一次 `svc_time_sync_ntp()`
 
 ## 6. svc_audio（音频服务）
 

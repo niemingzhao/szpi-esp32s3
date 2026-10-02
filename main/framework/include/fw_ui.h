@@ -74,6 +74,8 @@ esp_err_t fw_ui_dialog_close(lv_obj_t *dlg);
 
 /**
  * @brief 弹出 Toast（duration_ms 为 0 时默认 3000 ms，自动消失）
+ *
+ * 同一时刻只保留一个：新 Toast 会顶掉上一个（不会叠在一起）。
  */
 lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms);
 

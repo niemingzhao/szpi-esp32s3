@@ -54,8 +54,12 @@ static void refresh_time(void)
         return;
     }
 
-    char buf[8];
-    if (svc_time_format(svc_time_now(), "%H:%M", buf, sizeof(buf)) == ESP_OK) {
+    /* 12 / 24 小时制跟随系统设置（时钟 App 里切换，见 svc_time_get_24h）；
+     * 每秒读一次 NVS 很便宜，就不为它再加一条事件 */
+    const char *fmt = svc_time_get_24h() ? "%H:%M" : "%I:%M %p";
+
+    char buf[12];
+    if (svc_time_format(svc_time_now(), fmt, buf, sizeof(buf)) == ESP_OK) {
         lv_label_set_text(s_time, buf);
     }
 }

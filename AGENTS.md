@@ -224,7 +224,7 @@ LVGL 的 `indev_proc_release` 会**无条件**发送 `LV_EVENT_CLICKED`，只有
 - **不能在 App 事件回调里同步重建**：先把重建 `lv_async_call()` 丢到 LVGL 任务里执行，否则会删掉"正在处理事件的控件"。
 - **禁止删除活动屏**：`lv_obj_del()` 删除当前活动屏时会把 display 的 `act_scr` 置为 NULL，随后任何 `lv_screen_load*()` 都会空指针崩溃。重建前先 `lv_screen_load()` 一块临时空屏，最后确认它已不是活动屏再删除。
 - **`fw_window` 的 `s_active` 是裸指针**：旧屏被删除后它悬空，而新屏很可能复用同一地址，导致 `fw_window_switch_to()` 误判"已在目标屏"而跳过切换。切换前先 `fw_window_sync_active()`，且判重时同时核对 `lv_screen_active()`。
-- 重建前后台 App 要保持原样：对当前前台 App 依次 `on_destroy` → `on_create` → `on_pause` → `on_start`（`on_pause` 用来退订，避免 `on_start` 重复订阅），最后再切到它的新根屏。
+- 重建前后台 App 要保持原样：对当前前台 App 依次 `on_destroy` → `on_create` → `on_pause` → `on_start` → `on_resume`，最后再切到它的新根屏。`on_pause` 用来退订 / 停刷新，`on_start` 重新订阅；`on_resume` 不能省 —— 只用 `on_pause` / `on_resume` 管刷新定时器的 App（时钟、音乐、姿态仪、相机、录音机）没有 `on_start`，漏调 `on_resume` 会让它们的定时器一直停在暂停上，界面看着正常但不再刷新。
 
 ### 4.13 控件必须显式设色，不要依赖 LVGL 自带主题
 
@@ -320,7 +320,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 | 页面根屏 + 内容容器（从状态栏下方开始、内边距 12、行距 8） | `fw_ui_page(&content)` |
 | 整行入口（高 50、卡片底 + 描边，右侧可显示数值） | `fw_ui_row_btn()` + `fw_ui_row_btn_value()` |
 | "标签 + 滑块"一行 | `fw_ui_slider_row()` |
-| 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
+| 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`（同一时刻只保留一个，新的顶掉旧的）、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
 | 主题色 | 只用 `fw_theme_color_*()`（见 4.13） |
 | 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`；状态栏图标是 `fw_status_icons.h` 里的 `icon_status_*`（20×20 白色 + alpha，运行时 `image_recolor` 染色，6 个图标的绑定语义见 `docs/03-design/02-ui-system.md` 第 2 节）；桌面彩色图标是 `fw_home_icons.h` 里的 `icon_home_*`；卡片内的功能性图标用 LVGL `LV_SYMBOL_*` / `fw_asset_symbol_for(app_name)`（两个图标生成脚本见 `tools/`） |
 | LVGL 显示图片 / GIF（按文件路径） | `fw_asset_fs_path()` 转成 `"A:/sdcard/..."` 再给 `lv_image_set_src()` |
@@ -329,6 +329,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 | 摄像头 | `svc_camera_*`（不要把 `esp_camera.h` 引进 App） |
 | 系统信息 / 最近日志 / 任务 CPU | `svc_sysinfo_get()`、`svc_sysinfo_get_recent_logs()`、`svc_sysinfo_get_tasks()` |
 | 外扩 GPIO / PWM / I2C / UART / ADC | `svc_io_*`（不要把 `driver/gpio` 等引进 App） |
+| 时间 / 时区 / 12-24 小时制 | `svc_time_now()` / `svc_time_format()`、`svc_time_set_timezone()` / `svc_time_get_timezone()`（POSIX TZ 字符串，存 `sys/timezone`）、`svc_time_set_manual()`、`svc_time_get_24h()` / `svc_time_set_24h()`（存 `sys/clock_24h`，状态栏与时钟 App 共用，改状态栏时间格式也走它） |
 
 两条硬约束：**App 不直接调 IDF / Peripherals / Drivers**（缺接口就往 Services 加薄封装）；**不要在 App 里加大块 static 缓冲**（内部 RAM 只有十几 KB 余量，见 4.20）。
 
@@ -363,6 +364,30 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 ### 4.27 开机画面之前不能出现任何界面元素
 
 背光在 `periph_lcd_init()` 末尾就点亮了，而 Logo 要等 `fw_boot_animation()` 才上屏，中间约 0.6 s。这段必须只显示黑屏：`fw_init()` 在建状态栏**之前**把 `lv_layer_top()` 藏起来（状态栏、Toast、对话框都挂在这一层），由 `fw_boot_animation()` 收尾时再打开；`periph_lcd_init()` 把默认屏底色设成**纯黑**（不要用页面底色 `bg_primary`）。少做任何一件，开机时就会先露出状态栏或深灰底，看起来像"先闪一下桌面"。新增开屏前的初始化代码时，不要往 `lv_layer_top()` 或活动屏上放可见控件。
+
+### 4.28 `lv_obj_is_valid()` 不能用来判断悬空指针
+
+LVGL 9.6 里 `lv_obj_is_valid()` 只是 `lv_obj_is_in_widget_tree()` 的别名（`include/lvgl/api_map/lv_api_map_v9_5.h` 里的宏），它会顺着 `obj->parent` 一路往上找。所以**对已经释放的对象解引用会直接崩**（`LoadProhibited`，寄存器里能看到一个像 `0x39` 这种垃圾指针），而且因为它是宏，编译器不会提醒。踩过的表现：状态栏 Toast 记着上一个 Toast 的指针，`if (lv_obj_is_valid(s_toast))` 一执行就崩在 `lv_obj_is_in_widget_tree`。
+
+正确做法是自己管生命周期：
+
+- 保存对象句柄时，在对象的 `LV_EVENT_DELETE` 回调里把句柄清成 NULL 再收尾（`fw_ui_dialog` 的 `s_dialog`、`fw_ui_toast` 的 `s_toast` 都这么做）；删除是异步的，回调里还要按对象比对，避免旧对象的延迟删除误清新句柄。
+- 挂在对象上的 `lv_timer` 也要在同一个回调里删掉：定时器的 user_data 存着对象指针，定时器活过对象照样崩。
+- 批量创建的对象（脚本界面）要在自己的注册表里判断"还是不是我建的那些"，而不是问 LVGL。
+
+### 4.29 在 on_pause 里停了刷新的 App，on_start 与 on_resume 都要恢复
+
+`fw_app_mgr` 进入前台有两条路径，回调不一样：
+
+| 进入方式 | 回调 |
+|----------|------|
+| 首次创建（`on_create` 之后） | `on_start` |
+| 重新进入，App 还在返回栈里（`back()` 回来） | `on_resume` |
+| 重新进入，但用主页键回过桌面（`back_to_home()` 会清栈） | `on_start`（App 早就在，不会再 `on_create`） |
+
+所以在 `on_pause` 里 `lv_timer_pause()` 的 App，必须把恢复逻辑**同时挂到 `on_start` 和 `on_resume`**（时钟 App 就是一个函数挂两处）。只挂 `on_resume` 的典型症状：第一次进 App 秒数正常跳，用主页键回桌面再点进来就永远停在那一秒 —— 界面看着完全正常，只是不再刷新。
+
+框架侧也做了兜底：`app_launch()` 发现"App 已创建、只是不在返回栈里"时，`on_start` 之后会补一次 `on_resume`。两边都写，是为了以后改框架时不再踩。
 
 ---
 

@@ -241,7 +241,7 @@ esp_err_t fw_ui_dialog_close(lv_obj_t *dlg)
     if (s_dialog.scrim != NULL && (dlg == NULL || dlg == s_dialog.scrim)) {
         /* 可能是在对话框自己的按钮回调里调用的，不能当场删活动对象；
          * 状态留给 dialog_scrim_deleted_cb 清，删除生效前不允许再开新对话框 */
-        lv_obj_del_async(s_dialog.scrim);
+        lv_obj_delete_async(s_dialog.scrim);
     }
     lvgl_port_unlock();
     return ESP_OK;
@@ -249,12 +249,47 @@ esp_err_t fw_ui_dialog_close(lv_obj_t *dlg)
 
 /* ---------------------------------- Toast --------------------------------- */
 
+/*
+ * 同一时刻只保留一个 Toast：新 Toast 顶掉旧的。
+ *
+ * 句柄与它的一次性定时器都放在模块内，删除时自己清。这里**不用** lv_obj_is_valid()
+ * 判断对象是否还在 —— LVGL 9.6 里它只是 lv_obj_is_in_widget_tree 的别名
+ * （lv_api_map_v9_5.h），会顺着 obj->parent 往上走，对已经释放的对象解引用会
+ * 直接崩溃（GCC 也不会提醒，因为它只是宏）。
+ * 定时器也不能把对象指针存在 user_data 里：对象被外部删掉后它就是悬空指针。
+ */
+static lv_obj_t *s_toast = NULL;
+static lv_timer_t *s_toast_timer = NULL;
+
+/* 外部把 Toast 删掉时兜底：只清句柄，定时器由 toast_dismiss() / 到期回调处理 */
+static void toast_deleted_cb(lv_event_t *e)
+{
+    if (s_toast == lv_event_get_target(e)) {
+        s_toast = NULL;
+    }
+}
+
+/* 关掉当前 Toast 与它的定时器；调用者必须已持 LVGL 锁 */
+static void toast_dismiss(void)
+{
+    if (s_toast_timer != NULL) {
+        lv_timer_delete(s_toast_timer);
+        s_toast_timer = NULL;
+    }
+    if (s_toast != NULL) {
+        lv_obj_delete(s_toast);
+        s_toast = NULL;
+    }
+}
+
 static void toast_timer_cb(lv_timer_t *t)
 {
-    lv_obj_t *obj = (lv_obj_t *)lv_timer_get_user_data(t);
-    /* 调用方可能提前删掉了 toast：先确认对象还有效，避免用悬空指针 */
-    if (obj != NULL && lv_obj_is_valid(obj)) {
-        lv_obj_del_async(obj);
+    (void)t;
+    /* 一次性定时器：这个回调返回后 LVGL 就会把它删掉，先把句柄清掉 */
+    s_toast_timer = NULL;
+    if (s_toast != NULL) {
+        lv_obj_delete(s_toast);
+        s_toast = NULL;
     }
 }
 
@@ -264,6 +299,8 @@ lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms)
     if (duration_ms == 0) duration_ms = 3000;
 
     lvgl_port_lock(0);
+
+    toast_dismiss();        /* 顶掉上一个 */
 
     lv_obj_t *toast = lv_obj_create(lv_layer_top());
     lv_obj_set_size(toast, 272, LV_SIZE_CONTENT);
@@ -285,8 +322,12 @@ lv_obj_t *fw_ui_toast(const char *msg, uint32_t duration_ms)
 
     lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -44);
 
-    lv_timer_t *timer = lv_timer_create(toast_timer_cb, duration_ms, toast);
-    lv_timer_set_repeat_count(timer, 1);
+    lv_obj_add_event_cb(toast, toast_deleted_cb, LV_EVENT_DELETE, NULL);
+    s_toast = toast;
+    s_toast_timer = lv_timer_create(toast_timer_cb, duration_ms, NULL);
+    if (s_toast_timer != NULL) {
+        lv_timer_set_repeat_count(s_toast_timer, 1);
+    }
 
     lvgl_port_unlock();
     return toast;
