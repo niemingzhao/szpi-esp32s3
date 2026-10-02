@@ -3,10 +3,13 @@
  *
  * Services - Time 实现（时区 + SNTP）
  *
- * 本板没有电池 RTC，掉电后系统时间从 1970 重新开始。为了不让人每次热重启都要重新
- * 校时，这里每秒把"当前可信时间"存一份进 RTC 保留内存（RTC_NOINIT_ATTR：软件复位
- * 不丢、掉电才丢），启动时用 epoch + 本次启动已过去的毫秒数接着走，误差只有两次
- * 保存之间的那不到 1 秒。
+ * 本板没有电池 RTC，掉电后系统时间从 1970 重新开始。两层保时间：
+ *   1) RTC 保留内存（RTC_NOINIT_ATTR，每秒写）：软件复位 / 看门狗 / panic 后接着走，
+ *      误差不到 1 秒；掉电会丢。
+ *   2) NVS（sys/time_epoch，每分钟 + 同步 / 手动校时后写）：掉电也不丢，代价是掉电重启
+ *      后最多偏 1 分钟（两次写入之间的间隔）。
+ * 开机时取两者中较晚且有效的那个（≥ 2020-09），并置为"已同步"。
+ * 绝不能每秒写 NVS：那是写放大，而且每次 nvs_commit 都会阻塞调用任务。
  */
 
 #include "svc_common.h"
@@ -28,9 +31,12 @@ static const char *TAG = "svc.time";
 #define SVC_TIME_NTP_SERVER   "pool.ntp.org"
 #define SVC_TIME_RESYNC_MS    (6 * 3600 * 1000)   /* 每 6 小时 */
 #define SVC_TIME_SAVE_MS      1000                /* 时间存 RTC 内存的间隔 */
+#define SVC_TIME_NVS_MS       (60 * 1000)         /* 时间存 NVS 的间隔（掉电重启误差上限） */
 #define SVC_TIME_SET_NS       "sys"
 #define SVC_TIME_KEY_TZ       "timezone"
 #define SVC_TIME_KEY_24H      "clock_24h"
+#define SVC_TIME_KEY_EPOCH    "time_epoch"
+#define SVC_TIME_MIN_VALID    1600000000LL        /* 2020-09-13：低于它视为没同步过的假时间 */
 
 /* RTC 保留内存里的时间快照：magic + 反码一起校验，避免掉电后残留数据被误认 */
 typedef struct {
@@ -55,6 +61,34 @@ static void rtc_save(int64_t epoch)
     s_rtc.magic = SVC_TIME_RTC_MAGIC;       /* magic 最后写：前面两个字段一定已写好 */
 }
 
+/* 时间落 NVS：掉电也不丢（RTC 内存只扛软复位）。只在有效时间上写，
+ * 且按分钟级写 —— 绝不能每秒写 flash（写放大会拖慢调用任务） */
+static void nvs_save(int64_t epoch)
+{
+    if (epoch < SVC_TIME_MIN_VALID) return;
+
+    if (svc_settings_set_blob(SVC_TIME_SET_NS, SVC_TIME_KEY_EPOCH,
+                              &epoch, sizeof(epoch)) != ESP_OK) {
+        ESP_LOGW(TAG, "save time to nvs failed");
+    }
+}
+
+/* 读 NVS 里的时间；没存过 / 长度不符 / 值无效时返回 false */
+static bool nvs_load(int64_t *epoch)
+{
+    if (epoch == NULL) return false;
+
+    int64_t v = 0;
+    size_t len = sizeof(v);
+    if (svc_settings_get_blob(SVC_TIME_SET_NS, SVC_TIME_KEY_EPOCH, &v, &len) != ESP_OK) {
+        return false;
+    }
+    if (len != sizeof(v) || v < SVC_TIME_MIN_VALID) return false;
+
+    *epoch = v;
+    return true;
+}
+
 /* 每秒把当前时间存一份到 RTC 内存：存的是"时刻"而不是"经过时间"，
  * 所以重启后直接用 epoch + 本次启动已过去的毫秒数即可，误差只有两次保存之间的那点 */
 static void save_timer_cb(void *arg)
@@ -76,6 +110,7 @@ static void time_sync_cb(struct timeval *tv)
     (void)tv;
     s_synced = true;
     rtc_save(svc_time_now());
+    nvs_save(svc_time_now());       /* 校时后立刻落一次 NVS，防刚同步就掉电 */
     ESP_LOGI(TAG, "time synced");
     svc_event_bus_publish(SVC_EVENT_TIME_SYNCED, NULL, 0);
 }
@@ -171,22 +206,32 @@ esp_err_t svc_time_set_manual(int64_t ts)
 
     s_synced = true;
     rtc_save(ts);
+    nvs_save(ts);
     svc_event_bus_publish(SVC_EVENT_TIME_SYNCED, NULL, 0);
     return ESP_OK;
 }
 
-/* 联网后自动校时 + 定时同步：
+/* 联网后自动校时 + 定时同步 + 定时落 NVS：
  *   - 连上 Wi-Fi 时 wifi_connected_cb() 立刻触发一次（见 svc_time_init）
- *   - 这里每 6 小时兜底同步一次（SNTP 客户端自身也会按 CONFIG_LWIP_SNTP_UPDATE_DELAY 轮询）
+ *   - 每 6 小时兜底同步一次（SNTP 客户端自身也会按 CONFIG_LWIP_SNTP_UPDATE_DELAY 轮询）
+ *   - 每分钟把当前可信时间写一份进 NVS（掉电重启后最多偏 SVC_TIME_NVS_MS）
  *   - 手动校时把时间设成"已同步"也不会挡住 NTP：有网络时 NTP 会把它校准回来
  * 无网络时 svc_time_sync_ntp() 直接返回 INVALID_STATE，不开 SNTP。 */
 static void ntp_sync_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(5000));
+
+    uint32_t since_sync = 0;
     while (true) {
-        svc_time_sync_ntp();
-        vTaskDelay(pdMS_TO_TICKS(SVC_TIME_RESYNC_MS));
+        if (s_synced) nvs_save(svc_time_now());
+
+        since_sync += SVC_TIME_NVS_MS;
+        if (since_sync >= SVC_TIME_RESYNC_MS) {
+            since_sync = 0;
+            svc_time_sync_ntp();
+        }
+        vTaskDelay(pdMS_TO_TICKS(SVC_TIME_NVS_MS));
     }
 }
 
@@ -197,16 +242,32 @@ esp_err_t svc_time_init(void)
     setenv("TZ", tz, 1);
     tzset();
 
-    /* 热重启（软件复位 / 看门狗 / panic）后接着上次的可信时间走。
-     * 掉电后 RTC 内存失效，magic 校验会失败，系统时间仍是 1970。
-     * 误差 = 最后一次保存到复位之间的那点时间（不到 1 秒）。 */
-    if (s_rtc.magic == SVC_TIME_RTC_MAGIC && s_rtc.magic_inv == ~SVC_TIME_RTC_MAGIC) {
+    /* 恢复时间：RTC 内存（软复位，最准）与 NVS（掉电也不丢）取较晚且有效的那个。
+     * 未同步过 / 掉电后残留的无效值会被 SVC_TIME_MIN_VALID 挡掉，系统时间保持 1970。 */
+    int64_t restored = 0;
+    bool have_time = false;
+
+    if (s_rtc.magic == SVC_TIME_RTC_MAGIC && s_rtc.magic_inv == ~SVC_TIME_RTC_MAGIC &&
+        s_rtc.epoch >= SVC_TIME_MIN_VALID) {
         const int64_t boot_us = esp_timer_get_time();
-        const int64_t epoch = s_rtc.epoch + boot_us / 1000000;
-        struct timeval tv = { .tv_sec = (time_t)epoch, .tv_usec = 0 };
+        restored = s_rtc.epoch + boot_us / 1000000;
+        have_time = true;
+    }
+
+    int64_t nvs_epoch = 0;
+    if (nvs_load(&nvs_epoch)) {
+        ESP_LOGI(TAG, "time from nvs: epoch %lld", (long long)nvs_epoch);
+        if (!have_time || nvs_epoch > restored) {
+            restored = nvs_epoch;
+            have_time = true;
+        }
+    }
+
+    if (have_time) {
+        struct timeval tv = { .tv_sec = (time_t)restored, .tv_usec = 0 };
         if (settimeofday(&tv, NULL) == 0) {
             s_synced = true;
-            ESP_LOGI(TAG, "time restored after reboot (epoch %lld)", (long long)epoch);
+            ESP_LOGI(TAG, "time restored (epoch %lld)", (long long)restored);
         }
     }
 
@@ -220,7 +281,7 @@ esp_err_t svc_time_init(void)
         esp_timer_start_periodic(s_save_timer, SVC_TIME_SAVE_MS * 1000ULL);
     }
 
-    xTaskCreatePinnedToCore(ntp_sync_task, "ntp_sync_task", 3072, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(ntp_sync_task, "ntp_sync_task", 4096, NULL, 2, NULL, 0);
 
     /* 每分钟发布 SVC_EVENT_TIME_CHANGED（供状态栏等处刷新） */
     const esp_timer_create_args_t targs = {

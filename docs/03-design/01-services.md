@@ -198,7 +198,7 @@ esp_err_t svc_time_set_24h(bool on);
 ```
 
 - 12 / 24 小时制放在服务里而不是时钟 App 里：状态栏也要跟着变，两边读同一个设置
-- 时间持久化：每秒把当前可信时间存进 **RTC 保留内存**（`RTC_NOINIT_ATTR`，软件复位 / panic / 看门狗不丢、掉电才丢），启动时用 `epoch + esp_timer` 已运行时间接着走（误差 < 1 s）。本板没有电池 RTC，掉电后仍要从 1970 开始，需要重新校时或联网同步
+- 时间持久化：两层 —— **RTC 保留内存**（`RTC_NOINIT_ATTR`，每秒写：软件复位 / panic / 看门狗后接着走，误差 < 1 s；掉电丢）+ **NVS**（`sys/time_epoch`，每分钟与校时 / 手动设时后写：掉电也不丢，拔电重启后误差 ≤ 1 分钟）。开机取两者中较晚且 ≥ 2020-09 的值恢复，并置为"已同步"。本板没有电池 RTC
 - `ntp_sync_task`（优先级 2，核心 0）启动 5 s 后同步一次，之后每 6 小时定时同步一次（无网络时内部直接返回 `ESP_ERR_INVALID_STATE`）；连上 Wi-Fi 时 `wifi_connected_cb` 还会立刻触发一次
 - 成功后发布 `SVC_EVENT_TIME_SYNCED`；`svc_time_set_manual()` 也发布它（手动校时同样算"时间可信"）
 - 每分钟发布 `SVC_EVENT_TIME_CHANGED`
