@@ -371,6 +371,11 @@ esp_err_t svc_http_get_async(const char *url, char *resp_buf, size_t buf_len,
 ### 7.3 实现要点
 
 - Wi-Fi / IP 事件由 `esp_event` 默认事件循环任务处理，回调中发布 `SVC_EVENT_WIFI_*`
+- STA 不是开机就启动：只有「有保存凭据的自动重连」「SmartConfig」「AP 配网」三条路径会 `esp_wifi_start()`；`svc_net_wifi_scan()` / `svc_net_wifi_connect()` 会自己补一次（原因见 AGENTS 4.31）
+- `svc_net_prov_stop()` 回到 STA 模式后要按保存的凭据重新发起连接，否则"配网成功却一直连不上"（AGENTS 4.31）
+- 配网收尾只认网页里提交的目标 SSID（`s_prov_target`），否则 STA 自动连回旧网络的 Connected 事件会在 1~2 s 内把热点关掉（AGENTS 4.31）
+- `svc_net_wifi_forget()` 同时清驱动里的 STA 配置（`esp_wifi_set_config(WIFI_IF_STA, &空)`），不然下次 start 会拿旧配置自动连回去
+- SmartConfig 的 `SC_EVENT` 回调在 `svc_net_init()` 里只注册一次，`smartconfig_start()` 不再重复注册（原因见 AGENTS 4.31）；默认配网热点名是 `SVC_NET_PROV_AP_SSID`
 - 保存一份凭据到 NVS，支持自动重连；连接失败重试若干次后停止并发布 `SVC_EVENT_WIFI_CONNECT_FAILED`
 - 开启 PMF capable（兼容 WPA3）
 - HTTP 客户端用 `esp_http_client`，HTTPS 走 mbedTLS

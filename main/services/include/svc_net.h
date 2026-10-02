@@ -25,6 +25,9 @@ typedef enum {
     SVC_NET_MODE_STA_AP,
 } svc_net_mode_t;
 
+/** AP / Web 配网默认热点名（界面提示里显示，连上它再访问 http://192.168.4.1/） */
+#define SVC_NET_PROV_AP_SSID    "SZPI-OS"
+
 typedef struct {
     char ssid[33];
     char password[64];

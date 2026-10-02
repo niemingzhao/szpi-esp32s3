@@ -304,6 +304,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 - `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0`：通用 malloc 一律优先 PSRAM（FreeRTOS 对象 / 任务栈 / DMA 缓冲走 `MALLOC_CAP_INTERNAL`，不受影响）
 - `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384`：大块 DMA 缓冲都在开机早期分配，运行期只有小请求
 - `CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8` / `STATIC_TX_BUFFER_NUM=8`：默认 16/16，每块约 1.6 KB 且只能用内部 RAM
+- `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y`：mbedTLS 默认从内部 RAM 分配（`MBEDTLS_INTERNAL_MEM_ALLOC`），而 `mbedtls_ssl_setup()` 一次就要十几 KB（握手参数 + 收发缓冲）。Wi-Fi + BLE + LVGL 起来后内部只剩几 KB，HTTPS 请求会在 `esp-tls: mbedtls_ssl_setup returned -0x008D`（= `PSA_ERROR_INSUFFICIENT_MEMORY`）失败 —— 表现是"连上网了但天气 / 下载 / 脚本联网全失败"。改成 PSRAM 分配（`esp_mem.c` 里映射到 `MALLOC_CAP_SPIRAM`）
 - LVGL 绘制缓冲 10 行
 - App / 脚本里的大静态数组清掉，**static 数组别超过几百字节**
 
@@ -402,6 +403,16 @@ LVGL 9.6 里 `lv_obj_is_valid()` 只是 `lv_obj_is_in_widget_tree()` 的别名�
 - 缓冲**不要随 App 一起释放**：请求在飞的时候 App 可能因为换主题被 `on_destroy` + `on_create`，释放就是 use-after-free（任务还在往里写）。天气 App 的做法是缓冲首次分配后常驻。
 - URL 有长度上限（`SVC_HTTP_URL_MAX`，现在 512）：Open-Meteo 的天气请求渲染出来 367 字节，超了会被 `ESP_ERR_INVALID_SIZE` 拒掉（表现是"请求失败"，城市搜索却正常，因为那条只有 92 字节）。
 - 回调触发时 UI 指针可能已经是 NULL（App 销毁过）：每个写 UI 的地方都要判空。
+
+### 4.31 Wi-Fi 只在需要时 start，扫描 / 连接前要确保已 start
+
+`svc_net` 的 STA 不是开机就启动：只有「有保存凭据的自动重连」「SmartConfig」「AP 配网」三条路径会 `esp_wifi_start()`。所以：
+
+- `svc_net_wifi_scan()` / `svc_net_wifi_connect()` 自己要补一次 start（没有保存凭据时开机不会 start）。否则扫描直接返回 `ESP_ERR_INVALID_STATE`（界面只看到空列表、没有任何日志），连接只会拿到 `NOT_STARTED`，而"等 `STA_START` 再补连"的 pending 永远等不到 —— 表现就是"扫描不到 / 连不上"。
+- AP 配网收尾 `svc_net_prov_stop()` 里的 `stop → STA → start` 会把刚建立的连接断掉（`s_connect_pending` 在拿到 IP 时已清零），必须按保存的凭据重新发起一次连接，否则"配网提示成功却一直连不上"。
+- 配网期间的 `SVC_EVENT_WIFI_CONNECTED` 要按"网页里提交的目标 SSID"过滤（`s_prov_target`）：STA 驱动里可能还留着旧网络配置，切 APSTA 的 `esp_wifi_start()` 会让它自动连回旧 AP。若把这种事件当成配网成功，热点会在一两秒内被 `prov_stop()` 关掉 —— 表现就是"点了配网热点，电脑 / 手机根本搜不到"（日志里 `provisioning started` 之后紧跟 `connected to AP` 再 `provisioning stopped`）。
+- `svc_net_wifi_forget()` 除了清 NVS，还要 `esp_wifi_set_config(WIFI_IF_STA, &空配置)`：驱动里（`WIFI_STORAGE_RAM`）的旧配置不清掉的话，下次 `esp_wifi_start()` 仍会拿它自动连回旧网络（"忘记网络之后又自己连上了"）。
+- SmartConfig 的事件回调**只注册一次**（放在 `svc_net_init()`）：在 `svc_net_smartconfig_start()` 里注册会在反复配网时累积回调，手机重复广播时同一个事件被处理多次，反复 `esp_wifi_set_config()` 把刚建立的连接打断（日志表现：重复 `smartconfig got ssid`、`smartconfig already stopped`、`E wifi:sta is connecting, cannot set config`、连上几秒后又 `disconnected reason=8`）。配网进行中的判断放在回调里（`if (!s_smartconfig) return;`）。
 
 ---
 

@@ -72,6 +72,7 @@ static const char *reason_str(int reason)
 
 static void handle_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data);
 static void handle_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data);
+static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *data);
 
 static void handle_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -196,6 +197,11 @@ esp_err_t svc_net_init(void)
     err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, handle_ip_event, NULL, NULL);
     if (err != ESP_OK) return err;
 
+    /* SmartConfig 事件只注册一次：每 start 一次都注册会在反复配网时累积回调，
+     * 同一个广播被处理多次（表现是重复 "smartconfig got ssid" 与多余的连接重建） */
+    err = esp_event_handler_instance_register(SC_EVENT, ESP_EVENT_ANY_ID, handle_sc_event, NULL, NULL);
+    if (err != ESP_OK) return err;
+
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) return err;
 
@@ -258,7 +264,16 @@ esp_err_t svc_net_wifi_scan(svc_net_wifi_ap_t *aps, size_t max_aps, size_t *foun
 {
     if (found != NULL) *found = 0;
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
-    if (!s_started) return ESP_ERR_INVALID_STATE;
+
+    /* 没有保存凭据时开机不会启动 Wi-Fi（auto_connect 直接返回），而扫描/连接都要求
+     * 驱动已经 start：这里先确保 STA 起来，否则扫描直接返回 INVALID_STATE、界面只看到空列表 */
+    if (!s_started) {
+        esp_err_t serr = svc_net_wifi_start(SVC_NET_MODE_STA);
+        if (serr != ESP_OK) {
+            ESP_LOGW(TAG, "scan: wifi start failed: %s", esp_err_to_name(serr));
+            return serr;
+        }
+    }
 
     s_scan_done = false;
     svc_event_bus_publish(SVC_EVENT_WIFI_SCAN_STARTED, NULL, 0);
@@ -305,6 +320,16 @@ esp_err_t svc_net_wifi_connect(const svc_net_wifi_creds_t *creds)
 {
     if (creds == NULL || creds->ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+
+    /* 同上：先把 STA 起来再 connect，否则只会拿到 NOT_STARTED，
+     * "等 STA_START 再补连" 的 pending 永远等不到（配网走的 APSTA 已 start，不重复动） */
+    if (!s_started) {
+        esp_err_t serr = svc_net_wifi_start(SVC_NET_MODE_STA);
+        if (serr != ESP_OK) {
+            ESP_LOGW(TAG, "connect: wifi start failed: %s", esp_err_to_name(serr));
+            return serr;
+        }
+    }
 
     /* 已经连在这个网络上就不要再连一次（否则 IDF 会先断开再重连并告警） */
     if (s_status.wifi_connected && strcmp(s_status.wifi_ssid, creds->ssid) == 0) {
@@ -397,6 +422,13 @@ esp_err_t svc_net_wifi_forget(void)
     s_retry_count = 0;
 
     esp_wifi_disconnect();
+
+    /* 只清 NVS 不够：驱动里（WIFI_STORAGE_RAM）还留着 STA 配置，
+     * 下次 esp_wifi_start() 会拿旧配置自动连回去。这里把 STA 配置一并清掉 */
+    wifi_config_t empty;
+    memset(&empty, 0, sizeof(empty));
+    esp_wifi_set_config(WIFI_IF_STA, &empty);
+
     esp_wifi_stop();
     s_started = false;
 
@@ -419,11 +451,15 @@ esp_err_t svc_net_wifi_get_saved_ssid(char *buf, size_t len)
 
 /* ------------------------------- SmartConfig ------------------------------- */
 
-/* 手机 App（ESPTouch）把 SSID / 密码广播出来，这里收到后直接连接并持久化 */
+/* 手机 App（ESPTouch）把 SSID / 密码广播出来，这里收到后直接连接并持久化。
+ * 手机是反复广播的，同一个事件会送达多次；只在配网进行中处理一次，
+ * 否则会反复 esp_wifi_set_config（"sta is connecting, cannot set config"）把刚建立的连接打断 */
 static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     (void)base;
+
+    if (!s_smartconfig) return;
 
     if (id == SC_EVENT_GOT_SSID_PSWD) {
         const smartconfig_event_got_ssid_pswd_t *e =
@@ -435,13 +471,13 @@ static void handle_sc_event(void *arg, esp_event_base_t base, int32_t id, void *
         strlcpy(creds.password, (const char *)e->password, sizeof(creds.password));
         ESP_LOGI(TAG, "smartconfig got ssid: %s", creds.ssid);
 
+        s_smartconfig = false;              /* 先置位，后续重复广播直接忽略 */
         esp_smartconfig_stop();
-        s_smartconfig = false;
         svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
     } else if (id == SC_EVENT_SEND_ACK_DONE) {
         ESP_LOGI(TAG, "smartconfig finished");
-        esp_smartconfig_stop();
         s_smartconfig = false;
+        esp_smartconfig_stop();
     }
 }
 
@@ -453,12 +489,6 @@ esp_err_t svc_net_smartconfig_start(void)
     /* 配网期间 STA 必须在跑（监听手机广播） */
     esp_err_t err = svc_net_wifi_start(SVC_NET_MODE_STA);
     if (err != ESP_OK) return err;
-
-    err = esp_event_handler_instance_register(SC_EVENT, ESP_EVENT_ANY_ID, handle_sc_event, NULL, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "smartconfig handler register failed: %s", esp_err_to_name(err));
-        return err;
-    }
 
     err = esp_smartconfig_set_type(SC_TYPE_ESPTOUCH);
     if (err != ESP_OK) return err;
@@ -490,6 +520,9 @@ esp_err_t svc_net_smartconfig_stop(void)
 static httpd_handle_t s_prov_httpd = NULL;
 static esp_netif_t *s_prov_netif = NULL;
 static volatile bool s_prov_active = false;
+/* 用户在配网页提交的目标网络：只有它连上了才算配网成功、才关热点。
+ * 配网期间 STA 可能自动连回旧网络（驱动里还留着配置），那种 Connected 事件不能收尾 */
+static char s_prov_target[33] = { 0 };
 
 /* 极简 URL 解码：%XX → 字符，'+' → 空格 */
 static void url_decode(char *dst, size_t dst_len, const char *src)
@@ -588,21 +621,30 @@ static esp_err_t prov_save_handler(httpd_req_t *req)
     memset(&creds, 0, sizeof(creds));
     strlcpy(creds.ssid, ssid, sizeof(creds.ssid));
     strlcpy(creds.password, pass, sizeof(creds.password));
+
+    /* 记下目标网络，只有它连上才关热点（配网期间 STA 自动连回旧网络不算） */
+    strlcpy(s_prov_target, creds.ssid, sizeof(s_prov_target));
     svc_net_wifi_connect(&creds);       /* 内部会持久化凭据 */
 
     /* 热点与 HTTP 服务在连上目标 AP（拿到 IP）后由事件回调关闭 */
     return ESP_OK;
 }
 
-/* 配网成功（收到 IP）后自动收尾：不在 Wi-Fi 事件任务里直接停 Wi-Fi */
+/* 配网成功（提交的目标网络拿到 IP）后自动收尾：不在 Wi-Fi 事件任务里直接停 Wi-Fi。
+ * 只认 s_prov_target：配网期间 STA 自动连回旧网络产生的 Connected 事件不能关热点 */
 static void prov_connected_cb(const svc_event_t *evt, void *user)
 {
     (void)evt;
     (void)user;
 
-    if (s_prov_active) {
-        svc_net_prov_stop();
-    }
+    if (!s_prov_active || s_prov_target[0] == '\0') return;
+
+    svc_net_status_t st;
+    if (svc_net_get_status(&st) != ESP_OK) return;
+    if (!st.wifi_connected || strcmp(st.wifi_ssid, s_prov_target) != 0) return;
+
+    s_prov_target[0] = '\0';
+    svc_net_prov_stop();
 }
 
 esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
@@ -610,7 +652,7 @@ esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
     if (s_prov_active) return ESP_OK;
 
-    const char *ssid = (ap_ssid != NULL && ap_ssid[0] != '\0') ? ap_ssid : "SZPI-OS-Setup";
+    const char *ssid = (ap_ssid != NULL && ap_ssid[0] != '\0') ? ap_ssid : SVC_NET_PROV_AP_SSID;
 
     if (s_prov_netif == NULL) {
         s_prov_netif = esp_netif_create_default_wifi_ap();
@@ -621,6 +663,7 @@ esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
     memset(&wc, 0, sizeof(wc));
     strlcpy((char *)wc.ap.ssid, ssid, sizeof(wc.ap.ssid));
     wc.ap.ssid_len = (uint8_t)strlen(ssid);
+    wc.ap.ssid_hidden = 0;             /* 显式广播，别让电脑 / 手机扫不到 */
     wc.ap.channel = 1;
     wc.ap.max_connection = 2;
     wc.ap.authmode = WIFI_AUTH_OPEN;
@@ -669,9 +712,11 @@ esp_err_t svc_net_prov_start(const char *ap_ssid, const char *ap_password)
     httpd_register_uri_handler(s_prov_httpd, &uri_save);
 
     svc_event_bus_subscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb, NULL);
+    s_prov_target[0] = '\0';           /* 还没提交目标网络：期间任何 Connected 事件都不收尾 */
     s_prov_active = true;
-    ESP_LOGI(TAG, "provisioning started: AP '%s' (%s), browse http://192.168.4.1/",
-             ssid, (wc.ap.authmode == WIFI_AUTH_OPEN) ? "open" : "wpa2");
+    ESP_LOGI(TAG, "provisioning started: AP '%s' ch=%u (%s), browse http://192.168.4.1/",
+             ssid, (unsigned)wc.ap.channel,
+             (wc.ap.authmode == WIFI_AUTH_OPEN) ? "open" : "wpa2");
     return ESP_OK;
 }
 
@@ -680,6 +725,7 @@ esp_err_t svc_net_prov_stop(void)
     if (!s_prov_active) return ESP_OK;
 
     s_prov_active = false;
+    s_prov_target[0] = '\0';
     svc_event_bus_unsubscribe(SVC_EVENT_WIFI_CONNECTED, prov_connected_cb);
 
     if (s_prov_httpd != NULL) {
@@ -693,6 +739,13 @@ esp_err_t svc_net_prov_stop(void)
     esp_wifi_start();
     s_mode = WIFI_MODE_STA;
     s_started = true;
+
+    /* 上面的 stop/start 会把刚建立的连接断掉，而 STA_START 只在 s_connect_pending
+     * 为真时才补连（拿到 IP 时它已被清掉）：按保存的凭据再连一次，避免"配网成功了
+     * 却一直连不上"；没有保存凭据就自然跳过 */
+    s_connect_pending = false;
+    s_retry_count = 0;
+    svc_net_wifi_auto_connect();
 
     ESP_LOGI(TAG, "provisioning stopped");
     return ESP_OK;

@@ -35,9 +35,14 @@ CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
 
 # HTTPS 客户端（天气等）：挂内置证书 bundle，https:// 才能完成证书校验
-# （bundle 会占一点 Flash；TLS 握手还要一块内部 RAM，见 AGENTS 4.20）
+# （bundle 会占一点 Flash）
+# mbedTLS 改从 PSRAM 分配：默认的 internal 模式下 mbedtls_ssl_setup 要在内部 RAM 拿
+# 十几 KB（握手参数 + 收发缓冲），Wi-Fi + BLE + LVGL 起来后内部只剩几 KB，
+# 表现为 esp-tls: mbedtls_ssl_setup returned -0x008D（= PSA_ERROR_INSUFFICIENT_MEMORY）。
+# 内部 RAM 很紧，TLS 的全部动态分配都放 PSRAM（见 AGENTS 4.20）。
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # FATFS：TF 卡非 ASCII 长文件名（三项必须一起保留）
 CONFIG_FATFS_LFN_HEAP=y
