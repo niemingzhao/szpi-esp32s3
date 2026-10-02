@@ -20,6 +20,29 @@ TARGETS = ['main']
 
 CJK = re.compile(r'[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]')
 
+
+def check_font_cmap(path):
+    """检查生成后的字体 cmap 是否"含端点"。
+
+    LVGL 查表用的是 rcp < range_length（见 lv_font_fmt_txt.c），所以 range_length 必须
+    覆盖到最后一个码点。生成脚本若写成 last - first（少 1），码点最大的那个字就查不到
+    字形，配合 LV_USE_FONT_PLACEHOLDER=y 会显示成方框。
+    """
+    text = path.read_text(encoding='utf-8', errors='replace')
+    for m in re.finditer(r'\.range_start = (\d+), \.range_length = (\d+), \.glyph_id_start = (\d+),\s*\n'
+                         r'\s*\.unicode_list = (\w+),', text):
+        ulist = m.group(4)
+        if ulist == 'NULL':
+            continue
+        body = re.search(r'static const uint16_t %s\[\] = \{(.*?)\};' % ulist, text, re.S)
+        if body is None:
+            continue
+        offs = [int(x, 16) for x in re.findall(r'0x[0-9a-fA-F]+', body.group(1))]
+        if offs and max(offs) >= int(m.group(2)):
+            return False, '  %s：range_length=%s 没覆盖最后一个码点（max offset=%d）' % (
+                path.relative_to(ROOT), m.group(2), max(offs))
+    return True, ''
+
 missing = {}
 for d in TARGETS:
     base = ROOT / d
@@ -49,3 +72,20 @@ else:
     print('把这些字加进 tools/cn_chars.py 的 CN_CHARS 后重新生成字体即可：')
     print(''.join(sorted(missing.keys())))
     sys.exit(1)
+
+# 字体 cmap 必须"含端点"，否则码点最大的字会变成方框
+bad_fonts = []
+for rel in ('main/framework/assets/font_cn14.c', 'main/framework/assets/font_cn16.c'):
+    ok, msg = check_font_cmap(ROOT / rel)
+    if not ok:
+        bad_fonts.append(msg)
+
+if bad_fonts:
+    for m in bad_fonts:
+        print(m)
+    print('字体 cmap 的 range_length 没覆盖最后一个码点（LVGL 判定 rcp < range_length），'
+          '码点最大的字会显示成方框。')
+    print('重新生成字体：python tools/gen_cn_font.py --sizes 14,16')
+    sys.exit(1)
+
+print('OK: 字体 cmap 覆盖完整（含码点最大的字）')

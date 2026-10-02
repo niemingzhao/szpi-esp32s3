@@ -201,6 +201,8 @@ python tools/gen_cn_font.py --sizes 14,16
 
 回退链：`font_cn14`/`font_cn16` → `font_cn_extra` → `lv_font_montserrat_14`（FontAwesome 符号）。
 
+**字体 cmap 的 `range_length` 必须含端点**：LVGL 查表用的是 `rcp < range_length`（`lv_font_fmt_txt.c`），生成脚本里的 `range_length` 要写 `last - first + 1`。写成 `last - first` 时**码点最大的那个字永远查不到字形**，配合 `CONFIG_LV_USE_FONT_PLACEHOLDER=y` 就显示成方框（踩过的例子：字表里码点最大的是 `？` U+FF1F，日历"设为今天？"对话框里的问号就是方框）。`tools/check_cn_text.py` 会检查这一条，报错就重新跑 `python tools/gen_cn_font.py --sizes 14,16`。
+
 ### 4.9 点亮背光前必须先清屏
 
 ST7789 的 GRAM 掉电 / 复位后不会自动清空。若先开背光再等 LVGL 首帧，会短暂显示**上一次运行残留在面板里的画面**（表现为开机"先闪一下主页"）。`periph_lcd_init()` 在设置背光前先 `periph_lcd_fill(0x0000)` 整屏清黑。

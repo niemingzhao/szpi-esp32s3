@@ -97,7 +97,10 @@ def emit(ttf, size, out_path, name, chars, bpp, fallback):
 
     gid_start = 1 + len(ascii_glyphs)
     rng_start = other[0][0]
-    rng_len = other[-1][0] - rng_start
+    # 注意：LVGL 的 cmap 判定是 rcp < range_length，所以 range_length 必须含端点
+    # （写成 last - first 会让"码点最大的那个字"永远查不到字形，LV_USE_FONT_PLACEHOLDER
+    #  开启时显示成方框）。
+    rng_len = other[-1][0] - rng_start + 1
     ulist = [cp - rng_start for cp, *_ in other]
     if max(ulist) > 0xFFFF or rng_len > 0xFFFF:
         raise SystemExit('编码跨度超过 16 位，需要拆分 cmap')
