@@ -99,19 +99,19 @@ esp_err_t fw_statusbar_set_bluetooth(bool on);
 
 | 令牌 | 深色 | 浅色 | 用途 |
 |------|------|------|------|
-| `bg_primary` | `0x121212` | `0xE7ECF2` | 页面底色 |
-| `bg_secondary` | `0x1E1E1E` | `0xFFFFFF` | 状态栏 / 浮层 |
-| `bg_card` | `0x2A2A2A` | `0xFFFFFF` | 卡片 / 按钮 |
-| `text_primary` | `0xFFFFFF` | `0x161A1F` | 正文 |
-| `text_secondary` | `0xBBBBBB` | `0x4C5561` | 次要文字 |
-| `text_disabled` | `0x666666` | `0x9AA0A6` | 禁用态 |
-| `accent` | `0x4F9EFF` | `0x1D6FD0` | 主色（图标 / 滑块指示条 / 主按钮） |
-| `accent2` | `0x9C27B0` | `0x7B1FA2` | 次色 |
-| `success` | `0x4CAF50` | `0x2E7D32` | 成功 |
-| `warning` | `0xFFC107` | `0xE07B00` | 警告 |
-| `error` | `0xF44336` | `0xC62828` | 错误 |
-| `divider` | `0x2A2A2A` | `0xD5DCE4` | 分隔线 |
-| `border` | `0x333333` | `0xBFCAD6` | 卡片 / 状态栏描边 |
+| `bg_primary` | `0x0A0D12` | `0xE4ECF7` | 页面底色 |
+| `bg_secondary` | `0x151A22` | `0xFFFFFF` | 状态栏 / 浮层 / 列表项 |
+| `bg_card` | `0x1F2630` | `0xFFFFFF` | 卡片 / 按钮 |
+| `text_primary` | `0xFFFFFF` | `0x0F1319` | 正文 |
+| `text_secondary` | `0xC4CDDB` | `0x4C5768` | 次要文字 |
+| `text_disabled` | `0x606A78` | `0x98A3B2` | 禁用态 |
+| `accent` | `0x3D8CFF` | `0x0A5CD6` | 主色（图标 / 滑块指示条 / 主按钮 / 主信息卡描边） |
+| `accent2` | `0xFF6B3D` | `0xE8551F` | 次色 |
+| `success` | `0x4ADE80` | `0x16A34A` | 成功 |
+| `warning` | `0xFFC94D` | `0xD97706` | 警告 |
+| `error` | `0xFF5A5C` | `0xDC2626` | 错误 |
+| `divider` | `0x2A323D` | `0xD6E0EC` | 分隔线（设置行下线 / 列表项描边） |
+| `border` | `0x333D4A` | `0xBCC9DA` | 卡片 / 状态栏描边 |
 
 浅色主题下"白卡片 + 浅灰页面"的层次全靠描边，所以卡片、按钮、浮层都要显式设
 `border_width = 1` + `border_color = fw_theme_color_border()`；状态栏也用同色画一条底部 1 px 线。
@@ -345,7 +345,8 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 | 状态栏按钮 | 32 × 20，另加 `lv_obj_set_ext_click_area(btn, 8)` 扩大触摸区（视觉尺寸不变） |
 | 状态栏位置 | 左：返回 x=8、主页 x=48；中：时间 `LV_ALIGN_CENTER` x=-32；右：状态图标从左往右排（Wi-Fi -128、蓝牙 -104、声音 -80、录音 -56、摄像头 -32、TF 卡 -8），间距 24，全部常显（权威规格与语义见第 2 节） |
 | 页面内边距 | 12（内容区 `pad_all`），行间距 8（`pad_row`） |
-| 入口卡片 / 列表项 | 高 50 / 高 38 |
+| 设置行 / 列表项 | 高 44 / 高 40（设置行两两一组放进 `fw_ui_group()` 卡片里） |
+| 内容卡片（含主信息卡） | 高 60 ~ 70；主信息卡 2 px 主色描边 |
 | 桌面格子 | 73 × 76，4 列，列间距与网格内边距均为 5，网格垂直居中 |
 | 对话框 | 面板 268 × 156；正文宽 244；按钮行 240 × 36 贴底；按钮在行内均分（间距 8） |
 | Toast | 宽 272，距底部 44 |
@@ -355,8 +356,11 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 
 | 元素 | 圆角 | 描边 |
 |------|------|------|
-| 卡片 / 入口行 | 10 | 1 px `border` |
-| 小按钮 / 列表项 | 6 ~ 8 | 1 px `border` |
+| 卡片（内容块 / 列表容器 / 对话框） | 12 | 1 px `border` |
+| 主信息卡（页面主角：天气实况 / 当前网络） | 12 | **2 px `accent`** |
+| 分组卡片（包住若干设置行） | 12 | 1 px `border` |
+| 设置行（卡片内的行） | 0 | 只画底部 1 px `divider`（行之间分隔） |
+| 列表项 / 小按钮 | 8 | 1 px `divider`（列表项）/ `border`（按钮） |
 | 桌面格子 / 对话框面板 | 12 | 1 px `border` |
 | 状态栏 / 页面 | 0 | 状态栏底部画 1 px |
 
@@ -375,7 +379,9 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 
 - 中文正文 14 px（`fw_asset_font_cn()`），标题 16 px（`fw_asset_font_cn_large()`）
 - 拉丁与数字：`fw_asset_font_14()` / `fw_asset_font_20()` / `fw_asset_font_24()`
-- 图标尺寸：状态栏 20×20（自绘，染色），桌面 40×40（自绘彩色），卡片与列表内的功能性图标 20（LVGL 内置 `LV_SYMBOL_*`）
+- 图标尺寸：状态栏状态图标 20×20（`icon_status_*`）、桌面 40×40（`icon_home_*`）、界面功能图标 20×20（`icon_ui_*`），三者都是自绘白色 + alpha，运行时用 `image_recolor` 染色
+- App 界面里的功能图标统一用 `fw_ui_icons.h` 的 `icon_ui_*`：行入口 `fw_ui_row_btn_img()`、头部动作按钮 `fw_ui_icon_btn()`、单独摆放 `fw_ui_icon()`（强调色；未启用/无状态用 `text_disabled`）。**不要再在 App 里用 `LV_SYMBOL_*` 画图标**（只为还没改造的 App 与键盘内部保留）
+- 图标资源由 `python tools/gen_ui_icons.py` 生成（预览图 `tools/icons_ui_preview.png`），新增 / 改动图标改脚本后重新生成，不要手改 `icons_ui.c`
 - 界面文案的汉字必须在字体子集内（见 5.1），改完跑 `python tools/check_cn_text.py`
 
 ### 12.5 交互约定
@@ -403,10 +409,20 @@ lv_indev_set_display(indev, periph_lcd_get_disp());
 | 块 | 规格 |
 |----|------|
 | 头部行 | 30 px：左侧主操作 / 信息（撑满剩余宽度），右侧图标按钮（36 px，`LV_SYMBOL_*`）；按钮统一加 `lv_obj_set_ext_click_area(btn, 4)` |
-| 主信息卡 | 56 ~ 64 px：`bg_card` + 1 px `border` + 圆角 8 + 内边距 8；第一行「大数值（24 px）+ 状态（16 px、强调色）」用 flex 行两端对齐、垂直居中，保证两者齐平；第二行放次要小字（14 px、次要色） |
+| 主信息卡 | 60 ~ 70 px：`fw_ui_hero_card()`（`bg_card` + **2 px `accent` 描边** + 圆角 12 + 内边距 10）；第一行「大数值（24 px）+ 状态（16 px、强调色）」用 flex 行两端对齐、垂直居中，第二行次要小字（14 px、次要色）。它是页面的主角，不要做成和设置行一样的普通卡片 |
 | 详情格 | 3 列 × 3 行、格子 96 × 22、间距 4；每格 `bg_card` + 1 px 描边 + 圆角 6，格内**标题靠左（次要色）、数值靠右（主色）**两端对齐 |
-| 底部入口 | 可选的 50 px `fw_ui_row_btn` |
-| 行距 | 用 `fw_ui_page` 默认的 8 px；不够时页面容器自己设 6 px |
+| 设置行 | `fw_ui_row_btn*()` / `fw_ui_slider_row()`：高 44、**卡片内的行**（透明底 + 底部 1 px `divider`），不要直接摆在页面上散成一堆下划线；用 `fw_ui_group(parent)` 建一张分组卡片把它们包起来，一页 1~2 张卡、卡内是列表。按功能分组，不同组各一张卡 |
+| 行距 | 用 `fw_ui_page` 默认的 8 px；不够时页面容器自己设 6 px（天气页放 24 px 大数值时用 4 px） |
+
+**浮层统一版式**（天气城市搜索、Wi-Fi 密码输入都照这个来）：
+
+| 位置 | 内容 |
+|------|------|
+| 第一行（高 30） | 提示文字（14 px、次要色，撑满）+ 动作按钮 `fw_ui_btn()`（50 × 30、圆角 8）：主动作用主色底 + 白字，次要动作用卡片底 + 描边 |
+| 第二行（y = 36） | 输入框 `fw_ui_textarea()`（高 36、撑满）+ 可选的内联控件（如"显示密码"复选框） |
+| 下方 | 浮层自己的内容（结果列表 / 快捷钮），超出部分自己滚动 |
+| 底部 | 软键盘，默认隐藏，点输入框才弹出 |
+| 交互 | 点浮层空白处收键盘并让输入框失焦；返回键先关浮层；需要清空时给显式「重置」入口 |
 
 **设置 / 列表型页面**：不必凑主信息卡与九宫格，用「头部行 + 内容」两块即可。头部放状态文字（撑满剩余宽度）+ 图标按钮（Wi-Fi、蓝牙都这么做）；内容放 `fw_ui_list()` 或若干 `fw_ui_row_btn()` / `fw_ui_slider_row()`。内容超过一屏时只让列表自身滚动，页面容器显式 `lv_obj_set_scrollable(page, false)`；需要多页时在同一个根屏里放几块同尺寸容器做显隐，返回交给 `on_back`（见 `app_wifi.c`、`app_bt.c`）。
 

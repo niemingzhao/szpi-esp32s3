@@ -105,6 +105,7 @@ static lv_obj_t *s_root = NULL;
 static lv_obj_t *s_page[PAGE_COUNT] = { 0 };
 static int s_page_cur = PAGE_MAIN;
 
+static lv_obj_t *s_state_icon = NULL;
 static lv_obj_t *s_state_lb = NULL;
 static lv_obj_t *s_adv_btn = NULL;
 static lv_obj_t *s_list = NULL;
@@ -129,27 +130,23 @@ static const char *state_text(svc_bt_state_t st)
 static void refresh_state(void)
 {
     const svc_bt_state_t st = svc_bt_get_state();
+    const bool active = (st == SVC_BT_STATE_ADVERTISING || st == SVC_BT_STATE_CONNECTED);
 
     if (s_state_lb != NULL) {
-        char buf[40];
-        snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_BLUETOOTH, state_text(st));
-        lv_label_set_text(s_state_lb, buf);
+        lv_label_set_text(s_state_lb, state_text(st));
+    }
+    if (s_state_icon != NULL) {
+        lv_obj_set_style_image_recolor(s_state_icon,
+                                       active ? fw_theme_color_accent()
+                                              : fw_theme_color_text_disabled(), 0);
     }
     if (s_adv_btn != NULL) {
         lv_obj_t *icon = lv_obj_get_child(s_adv_btn, 0);
         if (icon != NULL) {
-            lv_label_set_text(icon, (st == SVC_BT_STATE_ADVERTISING) ? LV_SYMBOL_PAUSE
-                                                                      : LV_SYMBOL_PLAY);
+            lv_image_set_src(icon, (st == SVC_BT_STATE_ADVERTISING) ? &icon_ui_pause
+                                                                   : &icon_ui_play);
         }
     }
-}
-
-static void list_hint(const char *text)
-{
-    lv_obj_t *l = lv_label_create(s_list);
-    lv_label_set_text(l, text);
-    lv_obj_set_style_text_font(l, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(l, fw_theme_color_text_secondary(), 0);
 }
 
 /* 本服务只做从机，点设备不去连接（PRD NET-002）；这里顺便告诉用户本机的蓝牙名，
@@ -172,7 +169,7 @@ static size_t fill_scan_list(void)
     lv_obj_clean(s_list);
 
     if (s_scanning) {
-        list_hint("正在扫描…");
+        fw_ui_list_hint(s_list, "正在扫描…");
         return 0;
     }
 
@@ -181,7 +178,7 @@ static size_t fill_scan_list(void)
     if (svc_bt_get_scan_results(res, BT_SCAN_MAX, &count) != ESP_OK) count = 0;
 
     if (count == 0) {
-        list_hint(s_scanned ? "未发现设备" : "点右上角扫描设备");
+        fw_ui_list_hint(s_list, s_scanned ? "未发现设备" : "点右上角扫描设备");
         return 0;
     }
 
@@ -196,9 +193,16 @@ static size_t fill_scan_list(void)
                      res[i].bda[3], res[i].bda[4], res[i].bda[5]);
         }
 
-        char line[80];
-        snprintf(line, sizeof(line), "%s  %d dBm", who, (int)res[i].rssi);
-        fw_ui_list_add(s_list, line, device_cb, NULL);
+        char rssi[20];
+        snprintf(rssi, sizeof(rssi), "%d dBm", (int)res[i].rssi);
+        lv_obj_t *item = fw_ui_list_add_icon(s_list, &icon_ui_bt, who, rssi, device_cb, NULL);
+
+        /* 和 Wi-Fi 列表同一套信号分色规则 */
+        if (res[i].rssi >= -60) {
+            fw_ui_list_value_color(item, fw_theme_color_success());
+        } else if (res[i].rssi < -78) {
+            fw_ui_list_value_color(item, fw_theme_color_warning());
+        }
     }
     return count;
 }
@@ -215,7 +219,7 @@ static void adv_cb(lv_event_t *e)
     } else if (st == SVC_BT_STATE_READY) {
         svc_bt_adv_start();
     } else if (st == SVC_BT_STATE_CONNECTED) {
-        fw_ui_toast("已被连接，广播暂停", 1800);
+        fw_ui_toast("已被连接，广播暂停", 2000);
     } else {
         fw_ui_toast("蓝牙未就绪", 1500);
     }
@@ -320,7 +324,7 @@ static void hid_action_cb(lv_event_t *e)
     }
 
     if (err == ESP_OK) {
-        fw_ui_toast("已发送", 1200);
+        fw_ui_toast("已发送", 1500);
     } else {
         fw_ui_toast("发送失败", 1500);
     }
@@ -385,27 +389,6 @@ static lv_obj_t *make_page(lv_obj_t *host)
     return page;
 }
 
-static lv_obj_t *make_icon_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_t cb)
-{
-    lv_obj_t *btn = lv_button_create(parent);
-    lv_obj_set_size(btn, 36, HEADER_H - 2);
-    lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_ext_click_area(btn, 4);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, NULL);
-
-    lv_obj_t *lb = lv_label_create(btn);
-    lv_label_set_text(lb, symbol);
-    lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(lb, fw_theme_color_text_primary(), 0);
-    lv_obj_center(lb);
-    return btn;
-}
-
 static void page_show(int page);
 
 static void hid_page_cb(lv_event_t *e)
@@ -427,15 +410,17 @@ static void build_main_page(lv_obj_t *page)
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    s_state_icon = fw_ui_icon(bar, &icon_ui_bt, fw_theme_color_text_disabled());
+
     s_state_lb = lv_label_create(bar);
     lv_obj_set_flex_grow(s_state_lb, 1);
     lv_label_set_text(s_state_lb, "");
     lv_obj_set_style_text_font(s_state_lb, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(s_state_lb, fw_theme_color_text_primary(), 0);
 
-    s_adv_btn = make_icon_btn(bar, LV_SYMBOL_PLAY, adv_cb);
-    make_icon_btn(bar, LV_SYMBOL_REFRESH, scan_cb);
-    make_icon_btn(bar, LV_SYMBOL_KEYBOARD, hid_page_cb);
+    s_adv_btn = fw_ui_icon_btn(bar, &icon_ui_play, NULL, 36, adv_cb, NULL);
+    fw_ui_icon_btn(bar, &icon_ui_search, NULL, 36, scan_cb, NULL);
+    fw_ui_icon_btn(bar, &icon_ui_keyboard, NULL, 36, hid_page_cb, NULL);
 
     /* 周边设备：撑满剩余空间（需要滚动的是它自己，页面不滚） */
     s_list = fw_ui_list(page, NULL);
@@ -535,6 +520,7 @@ static void bt_on_destroy(void *ctx)
         s_root = NULL;
     }
     s_state_lb = NULL;
+    s_state_icon = NULL;
     s_adv_btn = NULL;
     s_list = NULL;
     for (int i = 0; i < PAGE_COUNT; i++) s_page[i] = NULL;

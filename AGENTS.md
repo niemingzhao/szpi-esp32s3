@@ -328,11 +328,17 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 | 用途 | 用谁 |
 |------|------|
 | 页面根屏 + 内容容器（从状态栏下方开始、内边距 12、行距 8） | `fw_ui_page(&content)` |
-| 整行入口（高 50、卡片底 + 描边，右侧可显示数值） | `fw_ui_row_btn()` + `fw_ui_row_btn_value()` |
-| "标签 + 滑块 +（可选）数值"一行 | `fw_ui_slider_row()` + `fw_ui_slider_row_value()` |
-| 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_grid()`、`fw_ui_toast()`（同一时刻只保留一个，新的顶掉旧的）、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
+| 整行入口（高 44 **卡片内的行**：透明底 + 底部 1 px 分隔线，右侧可显示数值） | `fw_ui_row_btn()`（内置符号）/ `fw_ui_row_btn_img()`（自绘图标，**优先用这个**）+ `fw_ui_row_btn_value()`，放进 `fw_ui_group()` |
+| 分组卡片（包住若干设置行，一页 1~2 张，不要让行散在页面上） | `fw_ui_group(parent)` |
+| 头部动作按钮（高 28，图标 + 可选文字，w>0 固定宽 / 否则撑满） | `fw_ui_icon_btn(parent, &icon_ui_xxx, text, w, cb, user)` |
+| 单独摆一个 20×20 图标 | `fw_ui_icon(parent, &icon_ui_xxx, color)` |
+| "图标 + 标签 + 滑块 + 数值"一行（同样是卡片内的行） | `fw_ui_slider_row(parent, &icon_ui_xxx, label, ...)` + `fw_ui_slider_row_value()` |
+| 内容卡片 / 主信息卡（页面主角，2 px 主色描边） | `fw_ui_card(parent, h)` / `fw_ui_hero_card(parent, h)` |
+| 设置项分组间隔 | `fw_ui_gap(parent, 10)` |
+| 浮层动作按钮 / 浮层输入框 | `fw_ui_btn(parent, text, w, primary, cb, user)` / `fw_ui_textarea(parent, placeholder)` |
+| 列表 / 网格 / Toast / 对话框 / 进度条 | `fw_ui_list()`、`fw_ui_list_add()`、`fw_ui_list_add_value()`（右侧数值）、`fw_ui_list_hint()`（提示行，无描边）、`fw_ui_list_mark()`（当前项）、`fw_ui_list_value_color()`、`fw_ui_grid()`、`fw_ui_toast()`（同一时刻只保留一个，新的顶掉旧的）、`fw_ui_dialog()`、`fw_ui_progress_bar()` |
 | 主题色 | 只用 `fw_theme_color_*()`（见 4.13） |
-| 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`；状态栏图标是 `fw_status_icons.h` 里的 `icon_status_*`（20×20 白色 + alpha，运行时 `image_recolor` 染色，6 个图标的绑定语义见 `docs/03-design/02-ui-system.md` 第 2 节）；桌面彩色图标是 `fw_home_icons.h` 里的 `icon_home_*`；卡片内的功能性图标用 LVGL `LV_SYMBOL_*` / `fw_asset_symbol_for(app_name)`（两个图标生成脚本见 `tools/`） |
+| 字体 / 图标 | `fw_asset_font_cn()/cn_large()/14()/20()/24()`；**界面功能图标用 `fw_ui_icons.h` 的 `icon_ui_*`**（20×20 白色 + alpha，运行时 `image_recolor` 染色，由 `tools/gen_ui_icons.py` 生成，App 里不要再画 `LV_SYMBOL_*`）；状态栏状态图标是 `fw_status_icons.h` 的 `icon_status_*`；桌面彩色图标是 `fw_home_icons.h` 的 `icon_home_*`（三个图标生成脚本见 `tools/`） |
 | LVGL 显示图片 / GIF（按文件路径） | `fw_asset_fs_path()` 转成 `"A:/sdcard/..."` 再给 `lv_image_set_src()` |
 | 目录遍历 | `svc_storage_iter_start/next/end`（`iter_next` 返回的是内部缓冲，用完必须马上拷走） |
 | 整块读写小文件（编辑器的文本、相机的 BMP） | `svc_storage_read/write/remove/exists`（读上限 1 MB） |
@@ -367,7 +373,7 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 
 ### 4.25 图片资源的 RGB565 字节序必须是小端
 
-`image_lckfb_logo.c`、`icons_home.c` 与 `icons_status.c` 里的 RGB565 平面按**小端**存放，因为 `periph_lcd_flush_cb()` 会在送屏前把整块缓冲再交换一次。资源若按大端生成，屏幕上会得到 R/B 互换的错色（开机 Logo 曾如此）。用 `tools/gen_home_icons.py` / `tools/gen_status_icons.py` 这类脚本重新生成时不要手工改字节序。
+`image_lckfb_logo.c`、`icons_home.c`、`icons_status.c` 与 `icons_ui.c` 里的 RGB565 平面按**小端**存放，因为 `periph_lcd_flush_cb()` 会在送屏前把整块缓冲再交换一次。资源若按大端生成，屏幕上会得到 R/B 互换的错色（开机 Logo 曾如此）。用 `tools/gen_home_icons.py` / `tools/gen_status_icons.py` / `tools/gen_ui_icons.py` 这类脚本重新生成时不要手工改字节序。
 
 ### 4.26 I2S 改时钟只能在主机通道做，且通道必须先 disable
 

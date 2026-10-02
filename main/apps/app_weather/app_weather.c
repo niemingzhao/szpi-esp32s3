@@ -65,11 +65,11 @@ static const char *TAG = "app.weather";
 #define GEO_MAX         8
 
 #define HEADER_H        30
-#define CARD_H          60
+#define CARD_H          70
 #define CELL_W          96
 #define CELL_H          22
 #define CELL_GAP        4
-#define OVERLAY_TOP     28           /* 让开状态栏 */
+#define OVERLAY_TOP     30           /* 让开状态栏，和 Wi-Fi 浮层一致 */
 #define KEYBOARD_H      120
 
 /* 详情格（8 个，3 列 × 3 行，第 9 格空着） */
@@ -113,7 +113,7 @@ static const chip_t CHIPS[] = {
 #define CHIP_W      47                                  /* 6×47 + 5×2 = 292，能放下 3 个汉字 */
 #define CHIP_H      28
 #define CHIP_ROW_H  (4 * CHIP_H + 3 * 4)
-#define CHIP_TOP    64                                  /* 输入框下面一点，键盘弹出时整块收起 */
+#define CHIP_TOP    74                                  /* 输入框下面一点，键盘弹出时整块收起 */
 
 /* 请求类型：通过 svc_http 的 user 传给回调，避免并发时错位 */
 typedef enum { REQ_NONE = 0, REQ_GEO, REQ_GEO_AUTO, REQ_WX } req_t;
@@ -438,7 +438,7 @@ static void results_begin(const char *msg)
 
     lv_obj_set_hidden(s_results, false);
     lv_obj_clean(s_results);
-    if (msg != NULL) fw_ui_list_add(s_results, msg, NULL, NULL);
+    if (msg != NULL) fw_ui_list_hint(s_results, msg);
 }
 
 static void fill_geo_list(void)
@@ -447,7 +447,7 @@ static void fill_geo_list(void)
 
     results_begin(NULL);
     if (s_item_count == 0) {
-        fw_ui_list_add(s_results, "没有找到城市", NULL, NULL);
+        fw_ui_list_hint(s_results, "没有找到城市");
         return;
     }
     for (size_t i = 0; i < s_item_count; i++) {
@@ -557,50 +557,6 @@ static void reset_cb(lv_event_t *e)
     overlay_reset();
 }
 
-/* 头部按钮：symbol 可空、text 可空；w > 0 固定宽度，否则撑满剩余空间 */
-static lv_obj_t *make_header_btn(lv_obj_t *parent, const char *symbol, const char *text,
-                                 lv_coord_t w, lv_event_cb_t cb)
-{
-    lv_obj_t *btn = lv_button_create(parent);
-    lv_obj_set_height(btn, HEADER_H - 2);
-    if (w > 0) {
-        lv_obj_set_width(btn, w);
-    } else {
-        lv_obj_set_flex_grow(btn, 1);
-    }
-    lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_ext_click_area(btn, 4);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, NULL);
-
-    if (symbol != NULL) {
-        lv_obj_t *icon = lv_label_create(btn);
-        lv_label_set_text(icon, symbol);
-        lv_obj_set_style_text_font(icon, fw_asset_font_cn(), 0);
-        lv_obj_set_style_text_color(icon, fw_theme_color_accent(), 0);
-        if (text != NULL) {
-            lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
-        } else {
-            lv_obj_center(icon);
-        }
-    }
-
-    if (text != NULL) {
-        lv_obj_t *lb = lv_label_create(btn);
-        lv_label_set_text(lb, text);
-        lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-        lv_obj_set_style_text_color(lb, fw_theme_color_text_primary(), 0);
-        lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(lb, lv_pct(72));
-        lv_obj_align(lb, LV_ALIGN_LEFT_MID, 32, 0);
-    }
-    return btn;
-}
-
 static void overlay_open(void)
 {
     if (s_overlay != NULL) return;
@@ -618,48 +574,33 @@ static void overlay_open(void)
 
     lv_obj_add_event_cb(s_overlay, overlay_click_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *hint = lv_label_create(s_overlay);
+    /* 第一行：提示（撑满）+ 重置（清空输入、收起键盘、回到刚进来的样子）。
+     * 和 Wi-Fi 密码浮层同一版式：第一行提示 + 动作按钮，第二行输入框 */
+    lv_obj_t *hint_row = lv_obj_create(s_overlay);
+    lv_obj_set_size(hint_row, lv_pct(100), 30);
+    lv_obj_set_style_bg_opa(hint_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(hint_row, 0, 0);
+    lv_obj_set_style_pad_all(hint_row, 0, 0);
+    lv_obj_set_style_pad_column(hint_row, 8, 0);
+    lv_obj_set_scrollable(hint_row, false);
+    lv_obj_set_flex_flow(hint_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hint_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(hint_row, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *hint = lv_label_create(hint_row);
+    lv_obj_set_flex_grow(hint, 1);
     lv_label_set_text(hint, "城市名（拼音 / 英文）");
     lv_obj_set_style_text_font(hint, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(hint, fw_theme_color_text_secondary(), 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    /* 输入行：输入框（撑满）+ 重置（清空输入、收起键盘、回到刚进来的样子） */
-    lv_obj_t *in_row = lv_obj_create(s_overlay);
-    lv_obj_set_size(in_row, lv_pct(100), 36);
-    lv_obj_set_style_bg_opa(in_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(in_row, 0, 0);
-    lv_obj_set_style_pad_all(in_row, 0, 0);
-    lv_obj_set_style_pad_column(in_row, 6, 0);
-    lv_obj_set_scrollable(in_row, false);
-    lv_obj_set_flex_flow(in_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(in_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(in_row, LV_ALIGN_TOP_MID, 0, 18);
+    fw_ui_btn(hint_row, "重置", 52, false, reset_cb, NULL);
 
-    s_ta = lv_textarea_create(in_row);
-    lv_textarea_set_one_line(s_ta, true);
-    lv_textarea_set_placeholder_text(s_ta, "shanghai / Tokyo");
-    lv_obj_set_height(s_ta, 36);
-    lv_obj_set_flex_grow(s_ta, 1);
-    lv_obj_set_style_text_font(s_ta, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(s_ta, fw_theme_color_text_primary(), 0);
+    /* 第二行：输入框（撑满） */
+    s_ta = fw_ui_textarea(s_overlay, "shanghai / Tokyo");
+    lv_obj_set_width(s_ta, lv_pct(100));
+    lv_obj_align(s_ta, LV_ALIGN_TOP_MID, 0, 36);
     lv_obj_add_event_cb(s_ta, ta_tap_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *reset = lv_button_create(in_row);
-    lv_obj_set_size(reset, 46, 32);
-    lv_obj_set_style_bg_color(reset, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(reset, 1, 0);
-    lv_obj_set_style_border_color(reset, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(reset, 6, 0);
-    lv_obj_set_style_shadow_width(reset, 0, 0);
-    lv_obj_set_style_pad_all(reset, 0, 0);
-    lv_obj_add_event_cb(reset, reset_cb, LV_EVENT_SHORT_CLICKED, NULL);
-
-    lv_obj_t *reset_lb = lv_label_create(reset);
-    lv_label_set_text(reset_lb, "重置");
-    lv_obj_set_style_text_font(reset_lb, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(reset_lb, fw_theme_color_text_primary(), 0);
-    lv_obj_center(reset_lb);
 
     /* 常用城市：3 行 × 6 个（47×6 + 2×5 = 292 ≤ 296），键盘弹出时会整体收起 */
     s_chips = lv_obj_create(s_overlay);
@@ -704,8 +645,8 @@ static void overlay_open(void)
     /* 结果列表：放在输入框下方（保留输入框，便于改完再提交），不用盖住整页。
      * 88 起的可用高度 = 232 − 88 = 144，留 4 px 余量 */
     s_results = fw_ui_list(s_overlay, NULL);
-    lv_obj_set_size(s_results, lv_pct(100), 140);
-    lv_obj_align(s_results, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_size(s_results, lv_pct(100), 128);
+    lv_obj_align(s_results, LV_ALIGN_TOP_MID, 0, 74);
     lv_obj_set_hidden(s_results, true);
 }
 
@@ -846,6 +787,7 @@ static void *weather_on_create(void)
 
     lv_obj_t *body = NULL;
     s_root = fw_ui_page(&body);
+    lv_obj_set_style_pad_row(body, 4, 0);   /* 页面较满：行距收到 4，实况卡才放得下 24 px 温度 */
 
     /* 常驻缓冲：请求在飞的时候 App 可能被换主题销毁重建，这些内存不随 App 释放 */
     if (s_buf == NULL) s_buf = malloc(WX_BUF_SIZE);
@@ -868,24 +810,17 @@ static void *weather_on_create(void)
     svc_settings_get_str(SET_NS, SET_KEY_LAT, s_lat, sizeof(s_lat), "");
     svc_settings_get_str(SET_NS, SET_KEY_LON, s_lon, sizeof(s_lon), "");
 
-    lv_obj_t *city_btn = make_header_btn(bar, LV_SYMBOL_GPS,
-                                         s_city[0] != '\0' ? s_city : "请选择城市",
-                                         -1, city_cb);
+    lv_obj_t *city_btn = fw_ui_icon_btn(bar, &icon_ui_pin,
+                                        s_city[0] != '\0' ? s_city : "请选择城市",
+                                        0, city_cb, NULL);
     s_city_lb = lv_obj_get_child(city_btn, 1);
-    make_header_btn(bar, LV_SYMBOL_REFRESH, NULL, 36, refresh_cb);
+    fw_ui_icon_btn(bar, &icon_ui_refresh, NULL, 36, refresh_cb, NULL);
 
-    /* 实况卡：第一行「温度 + 状态」（flex 行，保证两者垂直对齐），第二行小字 */
-    lv_obj_t *card = lv_obj_create(body);
-    lv_obj_set_size(card, lv_pct(100), CARD_H);
-    lv_obj_set_style_bg_color(card, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_border_color(card, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(card, 8, 0);
-    lv_obj_set_style_pad_all(card, 8, 0);
-    lv_obj_set_scrollable(card, false);
+    /* 实况卡：页面主角 —— 主色描边的 hero 卡，温度用 24 px 大数字，第二行小字 */
+    lv_obj_t *card = fw_ui_hero_card(body, CARD_H);
 
     lv_obj_t *line1 = lv_obj_create(card);
-    lv_obj_set_size(line1, lv_pct(100), 26);
+    lv_obj_set_size(line1, lv_pct(100), 31);
     lv_obj_set_style_bg_opa(line1, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(line1, 0, 0);
     lv_obj_set_style_pad_all(line1, 0, 0);
@@ -897,7 +832,7 @@ static void *weather_on_create(void)
 
     s_temp_lb = lv_label_create(line1);
     lv_label_set_text(s_temp_lb, "无数据");
-    lv_obj_set_style_text_font(s_temp_lb, fw_asset_font_cn_large(), 0);
+    lv_obj_set_style_text_font(s_temp_lb, fw_asset_font_24(), 0);
     lv_obj_set_style_text_color(s_temp_lb, fw_theme_color_text_primary(), 0);
 
     s_cond_lb = lv_label_create(line1);
@@ -907,6 +842,8 @@ static void *weather_on_create(void)
 
     s_sub_lb = lv_label_create(card);
     lv_label_set_text(s_sub_lb, "");
+    lv_obj_set_width(s_sub_lb, lv_pct(100));
+    lv_label_set_long_mode(s_sub_lb, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(s_sub_lb, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(s_sub_lb, fw_theme_color_text_secondary(), 0);
     lv_obj_align(s_sub_lb, LV_ALIGN_BOTTOM_LEFT, 0, 0);

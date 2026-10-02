@@ -91,17 +91,21 @@ static void *sound_on_create(void)
 
     lv_obj_t *body = NULL;
     s_root = fw_ui_page(&body);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     /* 与服务的真实状态同步（App 重建 / 别处改过静音都不会显示错） */
     s_muted = svc_audio_get_mute();
 
-    s_vol_slider = fw_ui_slider_row(body, "音量", 0, 100, svc_audio_get_volume(), volume_cb, NULL);
+    lv_obj_t *group = fw_ui_group(body);
+
+    s_vol_slider = fw_ui_slider_row(group, &icon_ui_speaker, "音量", 0, 100,
+                                    svc_audio_get_volume(), volume_cb, NULL);
     volume_show(svc_audio_get_volume());
 
-    s_mute_row = fw_ui_row_btn(body, LV_SYMBOL_MUTE, "静音", mute_cb, NULL);
+    s_mute_row = fw_ui_row_btn_img(group, &icon_ui_mute, "静音", mute_cb, NULL);
     mute_show();
 
-    fw_ui_row_btn(body, LV_SYMBOL_AUDIO, "试听提示音", test_cb, NULL);
+    fw_ui_row_btn_img(group, &icon_ui_play, "试听提示音", test_cb, NULL);
 
     lvgl_port_unlock();
 

@@ -31,35 +31,35 @@ typedef struct {
 } fw_palette_t;
 
 static const fw_palette_t s_dark = {
-    .bg_primary     = 0x121212,
-    .bg_secondary   = 0x1E1E1E,
-    .bg_card        = 0x2A2A2A,
+    .bg_primary     = 0x0A0D12,   /* 页面底色：近黑，冷调，和卡片拉开层次 */
+    .bg_secondary   = 0x151A22,   /* 状态栏 / 浮层 */
+    .bg_card        = 0x1F2630,   /* 卡片：比底色亮两档 */
     .text_primary   = 0xFFFFFF,
-    .text_secondary = 0xBBBBBB,
-    .text_disabled  = 0x666666,
-    .accent         = 0x4F9EFF,
-    .accent2        = 0x9C27B0,
-    .success        = 0x4CAF50,
-    .warning        = 0xFFC107,
-    .error          = 0xF44336,
-    .divider        = 0x2A2A2A,
-    .border         = 0x333333,
+    .text_secondary = 0xC4CDDB,
+    .text_disabled  = 0x606A78,
+    .accent         = 0x3D8CFF,   /* 主色：高饱和蓝，用在图标 / 卡片强调边 / 主按钮 */
+    .accent2        = 0xFF6B3D,   /* 辅色：暖橙 */
+    .success        = 0x4ADE80,
+    .warning        = 0xFFC94D,
+    .error          = 0xFF5A5C,
+    .divider        = 0x2A323D,
+    .border         = 0x333D4A,
 };
 
 static const fw_palette_t s_light = {
-    .bg_primary     = 0xE7ECF2,   /* 页面底色：浅灰，衬托白卡片 */
+    .bg_primary     = 0xE4ECF7,   /* 页面底色：浅灰蓝，衬托白卡片 */
     .bg_secondary   = 0xFFFFFF,   /* 状态栏 / 浮层：纯白 */
     .bg_card        = 0xFFFFFF,   /* 卡片 */
-    .text_primary   = 0x161A1F,
-    .text_secondary = 0x4C5561,
-    .text_disabled  = 0x9AA0A6,
-    .accent         = 0x1D6FD0,
-    .accent2        = 0x7B1FA2,
-    .success        = 0x2E7D32,
-    .warning        = 0xE07B00,
-    .error          = 0xC62828,
-    .divider        = 0xD5DCE4,
-    .border         = 0xBFCAD6,
+    .text_primary   = 0x0F1319,
+    .text_secondary = 0x4C5768,
+    .text_disabled  = 0x98A3B2,
+    .accent         = 0x0A5CD6,
+    .accent2        = 0xE8551F,
+    .success        = 0x16A34A,
+    .warning        = 0xD97706,
+    .error          = 0xDC2626,
+    .divider        = 0xD6E0EC,
+    .border         = 0xBCC9DA,
 };
 
 static fw_theme_t s_theme = FW_THEME_DARK;

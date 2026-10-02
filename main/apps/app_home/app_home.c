@@ -25,8 +25,39 @@ static const char *TAG = "app.home";
 #define HOME_ITEM_H     76
 #define HOME_GAP        5      /* 格子间距 = 网格内边距 = 列间距 */
 #define HOME_APP_MAX    24
+#define HOME_PAGE_MAX   6
 
 static lv_obj_t *s_root = NULL;
+static lv_obj_t *s_tiles[HOME_PAGE_MAX] = { 0 };
+static lv_obj_t *s_dots[HOME_PAGE_MAX] = { 0 };
+static size_t s_page_cnt = 0;
+static size_t s_page_cur = 0;
+
+/* 页码指示点：当前页强调色，其余用分隔线色 */
+static void page_refresh(void)
+{
+    for (size_t i = 0; i < s_page_cnt; i++) {
+        if (s_dots[i] == NULL) continue;
+        lv_obj_set_style_bg_color(s_dots[i],
+                                  (i == s_page_cur) ? fw_theme_color_accent()
+                                                    : fw_theme_color_divider(), 0);
+    }
+}
+
+static void tile_changed_cb(lv_event_t *e)
+{
+    lv_obj_t *tv = lv_event_get_target(e);
+    if (tv == NULL) return;
+
+    lv_obj_t *act = lv_tileview_get_tile_active(tv);
+    for (size_t i = 0; i < s_page_cnt; i++) {
+        if (s_tiles[i] == act) {
+            s_page_cur = i;
+            break;
+        }
+    }
+    page_refresh();
+}
 
 static void launch_cb(lv_event_t *e)
 {
@@ -66,7 +97,7 @@ static void add_cell(lv_obj_t *grid, const fw_app_desc_t *app)
         lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
         lv_label_set_text(label, app->title != NULL ? app->title : app->name);
         lv_obj_set_style_text_font(label, fw_asset_font_cn(), 0);
-        lv_obj_set_style_text_color(label, fw_theme_color_text_secondary(), 0);
+        lv_obj_set_style_text_color(label, fw_theme_color_text_primary(), 0);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -6);
     } else {
@@ -130,7 +161,43 @@ static void *home_on_create(void)
             size_t idx = p * HOME_PER_PAGE + k;
             add_cell(grid, (idx < cnt) ? items[idx] : NULL);
         }
+
+        if (p < HOME_PAGE_MAX) s_tiles[p] = tile;
     }
+
+    /* 多页时在底部放页码点：提示可以左右滑动，也标出当前页 */
+    s_page_cnt = (pages < HOME_PAGE_MAX) ? pages : HOME_PAGE_MAX;
+    s_page_cur = 0;
+
+    if (s_page_cnt > 1) {
+        lv_obj_t *dots = lv_obj_create(s_root);
+        lv_obj_set_size(dots, LV_SIZE_CONTENT, 8);
+        lv_obj_set_style_bg_opa(dots, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(dots, 0, 0);
+        lv_obj_set_style_pad_all(dots, 0, 0);
+        lv_obj_set_style_pad_column(dots, 6, 0);
+        lv_obj_set_scrollable(dots, false);
+        lv_obj_set_clickable(dots, false);
+        lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_align(dots, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+        for (size_t i = 0; i < s_page_cnt; i++) {
+            lv_obj_t *dot = lv_obj_create(dots);
+            lv_obj_set_size(dot, 6, 6);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(dot, 0, 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(dot, fw_theme_color_divider(), 0);
+            lv_obj_set_scrollable(dot, false);
+            lv_obj_set_clickable(dot, false);
+            s_dots[i] = dot;
+        }
+        page_refresh();
+    }
+
+    lv_obj_add_event_cb(tv, tile_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lvgl_port_unlock();
 
@@ -157,6 +224,12 @@ static void home_on_destroy(void *ctx)
         lv_obj_delete(s_root);
         s_root = NULL;
     }
+    for (size_t i = 0; i < HOME_PAGE_MAX; i++) {
+        s_tiles[i] = NULL;
+        s_dots[i] = NULL;
+    }
+    s_page_cnt = 0;
+    s_page_cur = 0;
     lvgl_port_unlock();
 }
 

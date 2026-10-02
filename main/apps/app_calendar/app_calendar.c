@@ -273,7 +273,7 @@ static lv_obj_t *make_nav_btn(lv_obj_t *parent, const char *text, lv_coord_t w,
     lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
     lv_obj_set_style_border_width(btn, 1, 0);
     lv_obj_set_style_border_color(btn, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_radius(btn, 8, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
     lv_obj_set_ext_click_area(btn, 4);        /* 视觉不变，触摸区向外扩 4 px */
@@ -338,8 +338,8 @@ static void *calendar_on_create(void)
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    make_nav_btn(bar, "《", 30, shift_year_cb, (void *)(intptr_t)-1);
-    make_nav_btn(bar, LV_SYMBOL_LEFT, 30, shift_month_cb, (void *)(intptr_t)-1);
+    fw_ui_icon_btn(bar, &icon_ui_left2, NULL, 30, shift_year_cb, (void *)(intptr_t)-1);
+    fw_ui_icon_btn(bar, &icon_ui_left, NULL, 30, shift_month_cb, (void *)(intptr_t)-1);
 
     s_title = lv_label_create(bar);
     lv_obj_set_flex_grow(s_title, 1);            /* 中间的空白都给标题，文字居中 */
@@ -347,8 +347,8 @@ static void *calendar_on_create(void)
     lv_obj_set_style_text_font(s_title, fw_asset_font_cn_large(), 0);
     lv_obj_set_style_text_color(s_title, fw_theme_color_text_primary(), 0);
 
-    make_nav_btn(bar, LV_SYMBOL_RIGHT, 30, shift_month_cb, (void *)(intptr_t)1);
-    make_nav_btn(bar, "》", 30, shift_year_cb, (void *)(intptr_t)1);
+    fw_ui_icon_btn(bar, &icon_ui_right, NULL, 30, shift_month_cb, (void *)(intptr_t)1);
+    fw_ui_icon_btn(bar, &icon_ui_right2, NULL, 30, shift_year_cb, (void *)(intptr_t)1);
     make_nav_btn(bar, "今天", 36, today_cb, NULL);
 
     /* 网格：7 列 ×（表头 + 6 周），列距 2、行距 1：7×40 + 6×2 = 292，装得下 296 */

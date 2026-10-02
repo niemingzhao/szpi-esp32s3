@@ -111,7 +111,7 @@ static void nav_home_cb(lv_event_t *e)
     fw_app_mgr_back_to_home();
 }
 
-static lv_obj_t *make_bar_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_t cb,
+static lv_obj_t *make_bar_btn(lv_obj_t *parent, const lv_image_dsc_t *icon, lv_event_cb_t cb,
                               lv_align_t align, lv_coord_t x, lv_coord_t w)
 {
     lv_obj_t *btn = lv_button_create(parent);
@@ -124,11 +124,11 @@ static lv_obj_t *make_bar_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_
     lv_obj_set_ext_click_area(btn, 8);      /* 视觉不变，触摸区域向四周放大 8 px */
     lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, NULL);
 
-    lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, symbol);
-    lv_obj_set_style_text_font(label, fw_asset_font_14(), 0);
-    lv_obj_set_style_text_color(label, fw_theme_color_text_primary(), 0);
-    lv_obj_center(label);
+    lv_obj_t *img = lv_image_create(btn);
+    lv_image_set_src(img, icon);
+    lv_obj_set_style_image_recolor(img, fw_theme_color_text_primary(), 0);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_center(img);
     return btn;
 }
 
@@ -271,9 +271,9 @@ static void statusbar_build(void)
     lv_obj_set_style_pad_all(s_bar, 0, 0);
     lv_obj_set_style_text_font(s_bar, fw_asset_font_14(), 0);
 
-    /* 左：返回 / 主页 */
-    make_bar_btn(s_bar, LV_SYMBOL_LEFT, nav_back_cb, LV_ALIGN_LEFT_MID, 8, 32);
-    make_bar_btn(s_bar, LV_SYMBOL_HOME, nav_home_cb, LV_ALIGN_LEFT_MID, 48, 32);
+    /* 左：返回 / 主页（自绘图标，按主题染色） */
+    make_bar_btn(s_bar, &icon_ui_left, nav_back_cb, LV_ALIGN_LEFT_MID, 8, 32);
+    make_bar_btn(s_bar, &icon_ui_home, nav_home_cb, LV_ALIGN_LEFT_MID, 48, 32);
 
     /* 中：时间，居中于左按钮组与右图标组之间的可用区域（中点约 x=128） */
     s_time = lv_label_create(s_bar);

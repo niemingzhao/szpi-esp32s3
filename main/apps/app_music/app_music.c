@@ -339,7 +339,8 @@ static void *music_on_create(void)
     add_btn(row, LV_SYMBOL_NEXT, next_cb);
     add_btn(row, LV_SYMBOL_STOP, stop_cb);
 
-    fw_ui_slider_row(body, "音量", 0, 100, svc_audio_get_volume(), volume_cb, NULL);
+    fw_ui_slider_row(body, &icon_ui_speaker, "音量", 0, 100, svc_audio_get_volume(),
+                     volume_cb, NULL);
 
     s_list = fw_ui_list(body, NULL);
     lv_obj_set_width(s_list, lv_pct(100));

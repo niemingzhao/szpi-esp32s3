@@ -585,7 +585,7 @@ static lv_obj_t *make_page(lv_obj_t *host)
     lv_obj_set_style_pad_all(page, 0, 0);
     lv_obj_set_style_pad_row(page, CLK_ROW_GAP, 0);
     lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(page, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollable(page, false);
     return page;
 }
@@ -652,8 +652,11 @@ static void build_main_page(lv_obj_t *page)
     lv_obj_set_style_text_font(s_date_lb, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(s_date_lb, fw_theme_color_text_secondary(), 0);
 
-    s_tz_row = fw_ui_row_btn(page, LV_SYMBOL_GPS, "时区", tz_row_cb, NULL);
-    s_set_row = fw_ui_row_btn(page, LV_SYMBOL_SETTINGS, "时间设置", set_row_cb, NULL);
+    /* 设置项集中在一张分组卡里（卡内行用细线分隔），和 Wi-Fi / 蓝牙页一致 */
+    lv_obj_t *group = fw_ui_group(page);
+
+    s_tz_row = fw_ui_row_btn_img(group, &icon_ui_pin, "时区", tz_row_cb, NULL);
+    s_set_row = fw_ui_row_btn_img(group, &icon_ui_clock, "时间设置", set_row_cb, NULL);
 }
 
 static void build_set_page(lv_obj_t *page)
@@ -661,8 +664,10 @@ static void build_set_page(lv_obj_t *page)
     /* 校时时能看着秒变，所以设置页也放一个小时间 */
     s_set_time_lb = make_time_label(page, fw_asset_font_20());
 
-    s_fmt_row = fw_ui_row_btn(page, LV_SYMBOL_LOOP, "时间格式", fmt_cb, NULL);
-    s_sync_row = fw_ui_row_btn(page, LV_SYMBOL_REFRESH, "立即同步", sync_cb, NULL);
+    lv_obj_t *group = fw_ui_group(page);
+    s_fmt_row = fw_ui_row_btn_img(group, &icon_ui_loop, "时间格式", fmt_cb, NULL);
+    s_sync_row = fw_ui_row_btn_img(group, &icon_ui_refresh, "立即同步", sync_cb, NULL);
+
     make_adjust_row(page);
 }
 

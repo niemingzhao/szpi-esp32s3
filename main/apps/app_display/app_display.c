@@ -97,17 +97,21 @@ static void *display_on_create(void)
 
     lv_obj_t *body = NULL;
     s_root = fw_ui_page(&body);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *group = fw_ui_group(body);
 
     lv_obj_t *slider =
-        fw_ui_slider_row(body, "亮度", 0, 100, svc_power_get_brightness(), brightness_cb, NULL);
+        fw_ui_slider_row(group, &icon_ui_sun, "亮度", 0, 100, svc_power_get_brightness(),
+                         brightness_cb, NULL);
     brightness_show(slider);
 
-    s_timeout_row = fw_ui_row_btn(body, LV_SYMBOL_EYE_OPEN, "熄屏超时", timeout_cb, NULL);
+    s_timeout_row = fw_ui_row_btn_img(group, &icon_ui_moon, "熄屏超时", timeout_cb, NULL);
     char buf[24];
     timeout_label(buf, sizeof(buf), svc_power_get_backlight_timeout());
     fw_ui_row_btn_value(s_timeout_row, buf);
 
-    s_theme_row = fw_ui_row_btn(body, LV_SYMBOL_SETTINGS, "主题", theme_cb, NULL);
+    s_theme_row = fw_ui_row_btn_img(group, &icon_ui_contrast, "主题", theme_cb, NULL);
     char tbuf[12];
     theme_label(tbuf, sizeof(tbuf));
     fw_ui_row_btn_value(s_theme_row, tbuf);

@@ -34,10 +34,8 @@ static const char *TAG = "app.wifi";
 #define WIFI_SCAN_STACK     4096
 
 #define HEADER_H            30
-#define CARD_H              52
+#define CARD_H              60
 #define LIST_BOX_H          92
-#define ROW_H               32
-#define SET_ROW_H           40
 #define KB_H                120
 #define OVERLAY_TOP         30
 
@@ -47,7 +45,8 @@ static lv_obj_t *s_root = NULL;
 static lv_obj_t *s_page[PAGE_COUNT] = { 0 };
 static int s_page_cur = PAGE_MAIN;
 
-static lv_obj_t *s_state_lb = NULL;      /* 头部：连接状态 */
+static lv_obj_t *s_state_icon = NULL;    /* 头部：连接状态图标（连接时强调色） */
+static lv_obj_t *s_state_lb = NULL;      /* 头部：连接状态文字 */
 static lv_obj_t *s_card = NULL;          /* 当前网络卡（未连接时整块隐藏） */
 static lv_obj_t *s_ssid_lb = NULL;
 static lv_obj_t *s_ip_lb = NULL;
@@ -101,8 +100,12 @@ static void refresh_status(void)
     char buf[48];
 
     if (s_state_lb != NULL) {
-        snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_WIFI, conn ? "已连接" : "未连接");
-        lv_label_set_text(s_state_lb, buf);
+        lv_label_set_text(s_state_lb, conn ? "已连接" : "未连接");
+    }
+    if (s_state_icon != NULL) {
+        lv_obj_set_style_image_recolor(s_state_icon,
+                                       conn ? fw_theme_color_accent()
+                                            : fw_theme_color_text_disabled(), 0);
     }
 
     /* 未连接时整块隐藏状态卡，不留占位（列表会撑满剩余空间） */
@@ -265,13 +268,13 @@ static void conn_open(const char *ssid)
     lv_obj_set_scrollable(s_conn, false);
     lv_obj_add_event_cb(s_conn, conn_click_cb, LV_EVENT_CLICKED, NULL);
 
-    /* 标题行：标题（撑满）+ 连接 */
+    /* 第一行：提示（撑满）+ 主动作按钮。两个浮层都用这个版式 */
     lv_obj_t *title_row = lv_obj_create(s_conn);
     lv_obj_set_size(title_row, lv_pct(100), 30);
     lv_obj_set_style_bg_opa(title_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(title_row, 0, 0);
     lv_obj_set_style_pad_all(title_row, 0, 0);
-    lv_obj_set_style_pad_column(title_row, 6, 0);
+    lv_obj_set_style_pad_column(title_row, 8, 0);
     lv_obj_set_scrollable(title_row, false);
     lv_obj_set_flex_flow(title_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(title_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
@@ -286,24 +289,11 @@ static void conn_open(const char *ssid)
     lv_label_set_text(lb, title);
     lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(lb, fw_theme_color_text_primary(), 0);
+    lv_obj_set_style_text_color(lb, fw_theme_color_text_secondary(), 0);
 
-    lv_obj_t *ok = lv_button_create(title_row);
-    lv_obj_set_size(ok, 56, 28);
-    lv_obj_set_style_bg_color(ok, fw_theme_color_accent(), 0);
-    lv_obj_set_style_border_width(ok, 0, 0);
-    lv_obj_set_style_radius(ok, 6, 0);
-    lv_obj_set_style_shadow_width(ok, 0, 0);
-    lv_obj_set_style_pad_all(ok, 0, 0);
-    lv_obj_add_event_cb(ok, conn_ok_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    fw_ui_btn(title_row, "连接", 52, true, conn_ok_cb, NULL);
 
-    lv_obj_t *ok_lb = lv_label_create(ok);
-    lv_label_set_text(ok_lb, "连接");
-    lv_obj_set_style_text_font(ok_lb, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(ok_lb, lv_color_white(), 0);
-    lv_obj_center(ok_lb);
-
-    /* 输入行：密码框（撑满）+ 显示密码 */
+    /* 第二行：密码框（撑满）+ 显示密码 */
     lv_obj_t *in_row = lv_obj_create(s_conn);
     lv_obj_set_size(in_row, lv_pct(100), 36);
     lv_obj_set_style_bg_opa(in_row, LV_OPA_TRANSP, 0);
@@ -314,16 +304,11 @@ static void conn_open(const char *ssid)
     lv_obj_set_flex_flow(in_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(in_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(in_row, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_align(in_row, LV_ALIGN_TOP_MID, 0, 36);
 
-    s_conn_ta = lv_textarea_create(in_row);
-    lv_textarea_set_one_line(s_conn_ta, true);
+    s_conn_ta = fw_ui_textarea(in_row, "密码");
     lv_textarea_set_password_mode(s_conn_ta, true);
-    lv_textarea_set_placeholder_text(s_conn_ta, "密码");
-    lv_obj_set_height(s_conn_ta, 36);
     lv_obj_set_flex_grow(s_conn_ta, 1);
-    lv_obj_set_style_text_font(s_conn_ta, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(s_conn_ta, fw_theme_color_text_primary(), 0);
     lv_obj_add_event_cb(s_conn_ta, conn_ta_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *show = lv_checkbox_create(in_row);
@@ -364,39 +349,6 @@ static void ap_cb(lv_event_t *e)
     }
 }
 
-static lv_obj_t *make_ap_row(lv_obj_t *parent, size_t idx)
-{
-    const svc_net_wifi_ap_t *ap = &s_aps[idx];
-
-    lv_obj_t *row = lv_button_create(parent);
-    lv_obj_set_size(row, lv_pct(100), ROW_H);
-    lv_obj_set_style_bg_color(row, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_border_color(row, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(row, 6, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_add_event_cb(row, ap_cb, LV_EVENT_SHORT_CLICKED, (void *)(uintptr_t)(idx + 1));
-
-    lv_obj_t *name = lv_label_create(row);
-    lv_label_set_text(name, ap->ssid);
-    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(name, lv_pct(64));
-    lv_obj_set_style_text_font(name, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(name, fw_theme_color_text_primary(), 0);
-    lv_obj_align(name, LV_ALIGN_LEFT_MID, 10, 0);
-
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%d dBm", (int)ap->rssi);
-    lv_obj_t *rssi = lv_label_create(row);
-    lv_label_set_text(rssi, buf);
-    lv_obj_set_style_text_font(rssi, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(rssi, fw_theme_color_text_secondary(), 0);
-    lv_obj_align(rssi, LV_ALIGN_RIGHT_MID, -10, 0);
-
-    return row;
-}
-
 static void fill_scan_list(void)
 {
     if (s_list == NULL) return;
@@ -404,31 +356,37 @@ static void fill_scan_list(void)
     lv_obj_clean(s_list);
 
     if (s_scanning) {
-        lv_obj_t *lb = lv_label_create(s_list);
-        lv_label_set_text(lb, "正在扫描…");
-        lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-        lv_obj_set_style_text_color(lb, fw_theme_color_text_secondary(), 0);
+        fw_ui_list_hint(s_list, "正在扫描…");
         return;
     }
     if (s_ap_count == 0) {
-        lv_obj_t *lb = lv_label_create(s_list);
-        lv_label_set_text(lb, "点右上角扫描网络");
-        lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-        lv_obj_set_style_text_color(lb, fw_theme_color_text_secondary(), 0);
+        fw_ui_list_hint(s_list, "点右上角扫描网络");
         return;
     }
 
-    /* 当前连接的网络用强调色描边 + 强调色文字标出来 */
+    /* 当前连接的网络用主色描边 + 主色文字标出来（和蓝牙列表同一套列表项） */
     svc_net_status_t st;
     memset(&st, 0, sizeof(st));
     const bool conn = (svc_net_get_status(&st) == ESP_OK) && st.wifi_connected;
 
     for (size_t i = 0; i < s_ap_count; i++) {
-        lv_obj_t *row = make_ap_row(s_list, i);
+        char rssi[20];
+        snprintf(rssi, sizeof(rssi), "%d dBm", (int)s_aps[i].rssi);
+
+        lv_obj_t *item = fw_ui_list_add_icon(s_list,
+                                             (s_aps[i].auth_mode == 0) ? &icon_ui_wifi : &icon_ui_lock,
+                                             s_aps[i].ssid, rssi, ap_cb,
+                                             (void *)(uintptr_t)(i + 1));
+
+        /* 信号强度分色：强 = 成功色，弱 = 警告色，其余保持次要色，方便挑网络 */
+        if (s_aps[i].rssi >= -60) {
+            fw_ui_list_value_color(item, fw_theme_color_success());
+        } else if (s_aps[i].rssi < -78) {
+            fw_ui_list_value_color(item, fw_theme_color_warning());
+        }
+
         if (conn && strcmp(s_aps[i].ssid, st.wifi_ssid) == 0) {
-            lv_obj_set_style_border_color(row, fw_theme_color_accent(), 0);
-            lv_obj_t *name = lv_obj_get_child(row, 0);
-            if (name != NULL) lv_obj_set_style_text_color(name, fw_theme_color_accent(), 0);
+            fw_ui_list_mark(item, true);
         }
     }
 }
@@ -593,30 +551,9 @@ static lv_obj_t *make_page(lv_obj_t *host)
     return page;
 }
 
-static lv_obj_t *make_icon_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_t cb)
-{
-    lv_obj_t *btn = lv_button_create(parent);
-    lv_obj_set_size(btn, 36, HEADER_H - 2);
-    lv_obj_set_style_bg_color(btn, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_ext_click_area(btn, 4);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_SHORT_CLICKED, NULL);
-
-    lv_obj_t *lb = lv_label_create(btn);
-    lv_label_set_text(lb, symbol);
-    lv_obj_set_style_text_font(lb, fw_asset_font_cn(), 0);
-    lv_obj_set_style_text_color(lb, fw_theme_color_text_primary(), 0);
-    lv_obj_center(lb);
-    return btn;
-}
-
 static void build_main_page(lv_obj_t *page)
 {
-    /* 头部：连接状态（撑满）+ 扫描 + 设置 */
+    /* 头部：连接状态（图标 + 文字，撑满）+ 扫描 + 设置 */
     lv_obj_t *bar = lv_obj_create(page);
     lv_obj_set_size(bar, lv_pct(100), HEADER_H);
     lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
@@ -627,27 +564,23 @@ static void build_main_page(lv_obj_t *page)
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+    s_state_icon = fw_ui_icon(bar, &icon_ui_wifi, fw_theme_color_text_disabled());
+
     s_state_lb = lv_label_create(bar);
     lv_obj_set_flex_grow(s_state_lb, 1);
     lv_label_set_text(s_state_lb, "");
     lv_obj_set_style_text_font(s_state_lb, fw_asset_font_cn(), 0);
     lv_obj_set_style_text_color(s_state_lb, fw_theme_color_text_primary(), 0);
 
-    make_icon_btn(bar, LV_SYMBOL_REFRESH, scan_cb);
-    make_icon_btn(bar, LV_SYMBOL_SETTINGS, set_cb);
+    fw_ui_icon_btn(bar, &icon_ui_search, NULL, 36, scan_cb, NULL);
+    fw_ui_icon_btn(bar, &icon_ui_gear, NULL, 36, set_cb, NULL);
 
-    /* 当前网络卡：SSID（大）+ 信号（右）；第二行 IP。未连接时整块隐藏 */
-    s_card = lv_obj_create(page);
-    lv_obj_set_size(s_card, lv_pct(100), CARD_H);
-    lv_obj_set_style_bg_color(s_card, fw_theme_color_bg_card(), 0);
-    lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_border_color(s_card, fw_theme_color_border(), 0);
-    lv_obj_set_style_radius(s_card, 8, 0);
-    lv_obj_set_style_pad_all(s_card, 6, 0);
-    lv_obj_set_scrollable(s_card, false);
+    /* 当前网络卡：页面主角，用主色描边的 hero 卡；SSID（大）+ 信号（右），第二行 IP。
+     * 未连接时整块隐藏 */
+    s_card = fw_ui_hero_card(page, CARD_H);
 
     lv_obj_t *line1 = lv_obj_create(s_card);
-    lv_obj_set_size(line1, lv_pct(100), 20);
+    lv_obj_set_size(line1, lv_pct(100), 22);
     lv_obj_set_style_bg_opa(line1, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(line1, 0, 0);
     lv_obj_set_style_pad_all(line1, 0, 0);
@@ -675,38 +608,24 @@ static void build_main_page(lv_obj_t *page)
     lv_obj_set_style_text_color(s_ip_lb, fw_theme_color_text_secondary(), 0);
     lv_obj_align(s_ip_lb, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-    /* 可用网络：可滚动；未连接时状态卡隐藏，它会自动撑满剩余空间 */
-    s_list = lv_obj_create(page);
+    /* 可用网络：和蓝牙页同一个列表组件；未连接时状态卡隐藏，它会自动撑满剩余空间 */
+    s_list = fw_ui_list(page, NULL);
     lv_obj_set_size(s_list, lv_pct(100), LIST_BOX_H);
     lv_obj_set_flex_grow(s_list, 1);
-    lv_obj_set_style_bg_opa(s_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_list, 0, 0);
-    lv_obj_set_style_pad_all(s_list, 0, 0);
-    lv_obj_set_style_pad_row(s_list, 4, 0);
-    lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_AUTO);
 }
 
 static void build_set_page(lv_obj_t *page)
 {
-    lv_obj_t *r;
+    /* 按功能分两张分组卡：连接管理（断开/重连、忘记网络）与配网（配网热点、SmartConfig） */
+    lv_obj_t *g = fw_ui_group(page);
 
-    r = fw_ui_row_btn(page, LV_SYMBOL_REFRESH, "断开", disc_cb, NULL);
-    lv_obj_set_height(r, SET_ROW_H);
-    s_disc_row = r;
+    s_disc_row = fw_ui_row_btn_img(g, &icon_ui_link, "断开", disc_cb, NULL);
+    s_saved_row = fw_ui_row_btn_img(g, &icon_ui_trash, "忘记网络", forget_cb, NULL);
 
-    r = fw_ui_row_btn(page, LV_SYMBOL_SETTINGS, "配网热点", prov_cb, NULL);
-    lv_obj_set_height(r, SET_ROW_H);
-    s_prov_row = r;
+    g = fw_ui_group(page);
 
-    r = fw_ui_row_btn(page, LV_SYMBOL_UPLOAD, "SmartConfig", smartconfig_cb, NULL);
-    lv_obj_set_height(r, SET_ROW_H);
-    s_sc_row = r;
-
-    r = fw_ui_row_btn(page, LV_SYMBOL_TRASH, "忘记网络", forget_cb, NULL);
-    lv_obj_set_height(r, SET_ROW_H);
-    s_saved_row = r;
+    s_prov_row = fw_ui_row_btn_img(g, &icon_ui_hotspot, "配网热点", prov_cb, NULL);
+    s_sc_row = fw_ui_row_btn_img(g, &icon_ui_phone, "SmartConfig", smartconfig_cb, NULL);
 }
 
 static void page_show(int page)
@@ -783,6 +702,7 @@ static void wifi_on_destroy(void *ctx)
         s_root = NULL;
     }
     s_state_lb = NULL;
+    s_state_icon = NULL;
     s_card = NULL;
     s_ssid_lb = NULL;
     s_ip_lb = NULL;
