@@ -20,7 +20,7 @@
  * 构建产物的 git 版本另见 svc_sysinfo 的 app_version，两者用途不同：
  * 这里是产品版本号，那里是"这一次构建"的版本。
  */
-#define SZPI_OS_VERSION   "v0.5"
+#define SZPI_OS_VERSION   "v1.0.0"
 
 /**
  * @brief 配网热点名（AP 模式，32 字节以内）
