@@ -1,0 +1,133 @@
+name: CI
+
+# 推送到 main / ci-* 分支、对 main 的 PR、以及手动触发时运行。
+#   - 自检与工具测试：秒级，不依赖硬件，也不需要编译
+#   - 编译固件（自检通过后才跑）：在 ESP-IDF v6.1 容器里编译，再用 idf.py merge-bin 合并成单一固件
+#     releases/szpi-esp32s3.bin（含 bootloader + 分区表 + 应用，串口烧录工具选它、
+#     地址填 0x0 即可；发布见 release.yml）
+#   - 刷新固件：只有 main 分支推送会跑，把合并固件提交回仓库，让仓库里的
+#     releases/szpi-esp32s3.bin 始终是最新一次 main 构建
+on:
+  push:
+    branches:
+      - main
+      - 'ci/*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: 自检与工具测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 准备 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: 安装测试依赖
+        run: python -m pip install --disable-pip-version-check pillow
+
+      - name: 工具单元测试
+        run: python -m unittest discover -s tools/tests -v
+
+      - name: 静态自检
+        run: python tools/run_checks.py
+
+  build:
+    name: 编译固件
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: espressif/idf:v6.1
+    env:
+      IDF_CCACHE_ENABLE: 1
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: ccache 缓存
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: 编译并合并固件
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin
+          mkdir -p releases
+          cp build/merged-binary.bin releases/szpi-esp32s3.bin
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v7
+        with:
+          name: szpi-os-firmware-${{ github.sha }}
+          path: releases/szpi-esp32s3.bin
+          if-no-files-found: error
+
+      - name: 上传调试文件（elf / map）
+        uses: actions/upload-artifact@v7
+        with:
+          name: szpi-os-debug-${{ github.sha }}
+          path: |
+            build/*.elf
+            build/*.map
+          if-no-files-found: error
+
+  refresh:
+    name: 刷新仓库里的固件
+    needs: build
+    # 只在 main 分支推送时刷新；PR 与 ci-* 分支不写仓库
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # 串行化：与 release.yml 共用同一个组，避免同时往分支写固件
+    concurrency:
+      group: firmware-write
+      cancel-in-progress: false
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: 取回合并固件
+        uses: actions/download-artifact@v8
+        with:
+          name: szpi-os-firmware-${{ github.sha }}
+          path: releases
+
+      - name: 提交固件
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 已经跟踪且内容没变就不提交（重新跑一次构建时不会产生空提交）
+          if git ls-files --error-unmatch releases/szpi-esp32s3.bin > /dev/null 2>&1 \
+             && git diff --quiet -- releases/szpi-esp32s3.bin; then
+            echo "releases/szpi-esp32s3.bin 没有变化，跳过提交"
+            exit 0
+          fi
+
+          SHA=$(git rev-parse --short HEAD)
+          git add releases/szpi-esp32s3.bin
+          git commit -m "更新发布固件（$SHA 构建）[skip ci]"
+          git push origin HEAD:main

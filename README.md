@@ -1,5 +1,7 @@
 # szpi-esp32s3
 
+[![CI](https://github.com/niemingzhao/szpi-esp32s3/actions/workflows/ci.yml/badge.svg)](https://github.com/niemingzhao/szpi-esp32s3/actions/workflows/ci.yml)
+
 运行在立创·实战派 ESP32-S3 开发板上的嵌入式操作系统固件（SZPI-OS），基于 ESP-IDF v6.1，纯 C + Lua。
 
 核心能力（界面、音频、摄像头、硬件 IO、文件、网络、蓝牙、系统信息）通过 Lua 脚本暴露给用户；固件本身只负责驱动、服务与框架。同一份固件里既有 22 个内置 App，也能随时跑用户放进 TF 卡的脚本。
@@ -67,8 +69,12 @@ szpi-esp32s3/
 │   ├── services/           # Services 层（业务服务）
 │   ├── framework/          # Framework 层（UI 框架 + 脚本运行时）
 │   └── apps/               # Apps 层（22 个内置 App + 注册表）
-├── tools/                  # 自检脚本、字体 / 图标生成
+├── tools/                  # 自检脚本（check_*）、工具测试（tests/）、字体 / 图标生成
 ├── docs/                   # 需求 / 架构 / 详细设计
+├── docker/                 # 构建镜像（Dockerfile，本地与 CI 共用）
+├── .devcontainer/          # VS Code 开发容器
+├── .github/workflows/      # CI（静态自检 + 编译）与一键发布
+├── releases/               # 发布用合并固件（szpi-esp32s3.bin）
 ├── partitions.csv          # 分区表（factory 8 MB + storage 7 MB）
 ├── sdkconfig.defaults      # 默认配置（策略文件）
 └── managed_components/     # 组件管理器自动填充，按构建产物对待
@@ -112,7 +118,13 @@ idf.py -p COM4 flash monitor
 
 ## 自检与工具
 
-改完代码或文案后跑一遍，都不依赖硬件、也不需要构建：
+改完代码或文案后跑一遍，都不依赖硬件、也不需要构建。一键全跑：
+
+```powershell
+python tools/run_checks.py
+```
+
+单项也可以单独跑（退出码 0 = 通过）：
 
 ```powershell
 python tools/check_cn_text.py           # 界面文案的非 ASCII 字符能否被字体覆盖，字体 cmap 是否含端点
@@ -135,6 +147,51 @@ python tools/check_app_registry.py      # App 描述符定义与 app_common.c �
 python tools/gen_fw_fonts.py    # 中文字体（GB2312 两套 + GBK 回退）
 python tools/gen_fw_icons.py    # 界面 / 状态栏 / 桌面三组图标
 ```
+
+这些工具脚本本身有单元测试（`unittest`，只需 Python 3 + pillow）：
+
+```powershell
+python -m unittest discover -s tools/tests
+```
+
+测试的是工具脚本而不是固件：每个自检的坏样例必须报错、好样例必须放行，图标与字体的
+生成结果必须与仓库里的资源一致。字体可复现检查很慢，用 `$env:SZPI_TEST_FONTS = "1"` 打开。
+
+## 自动化与 CI
+
+- **CI**：`.github/workflows/ci.yml`。push 到 `main` / `ci/*`、对 `main` 的 PR、手动触发时跑：
+  `checks`（`python tools/run_checks.py` + 工具单元测试）、`build`（自检通过后才跑；在
+  `espressif/idf:v6.1` 容器里编译，再用 `idf.py merge-bin` 合并成**单一固件** `releases/szpi-esp32s3.bin`，
+  上传该固件与 `.elf` / `.map`），以及只在 main 推送时跑的 `refresh`（把合并固件提交回仓库，让仓库里的
+  `releases/szpi-esp32s3.bin` 始终是最新一次 main 构建；提交带 `[skip ci]`，不会再触发流水线）。
+  ccache 用 `actions/cache` 缓存 `~/.ccache`，重复构建快很多。
+- **一键发布**：`.github/workflows/release.yml`，在 Actions 页面手动触发，选版本号提升方式
+  （patch / minor / major）或直接填版本号。流程：改版本号 → 编译合并 → 提交版本号与
+  `releases/szpi-esp32s3.bin` → 打标签 → 建 GitHub Release（固件作为资产上传）。
+- **版本号**：全工程只在 `main/services/include/svc_identity.h` 的 `SZPI_OS_VERSION` 定义一次，
+  由 `tools/bump_version.py` 读写（保留分段数与前导 `v`，只改那一行）：
+  ```powershell
+  python tools/bump_version.py --show          # 看当前版本
+  python tools/bump_version.py --bump minor    # v0.5 -> v0.6
+  ```
+- **组件版本**：`dependencies.lock` 不提交（由组件管理器按 `main/idf_component.yml` 生成），
+  CI 每次构建重新解析组件版本；它本身不要手改。
+- **单一固件**：`releases/szpi-esp32s3.bin` 是 bootloader + 分区表 + 应用的合并镜像，串口烧录工具
+  选它、地址填 `0x0` 即可。它是构建产物但随版本提交（发布时直接用），不要手改。
+- **pre-commit**（可选）：
+  ```powershell
+  pip install pre-commit
+  pre-commit install
+  ```
+  提交前跑静态自检，推送前跑工具测试，对改动的 C / 头文件跑 clang-format。
+- **clang-format**：`.clang-format`（4 空格缩进、函数大括号另起一行、指针靠左、列宽 100）。
+  仓库此前没有统一格式，首次对全树执行会有一处格式 diff，建议单独提交一次：
+  ```powershell
+  clang-format -i $(git ls-files 'main/*.c' 'main/*.h')
+  ```
+- **容器**：`docker/Dockerfile` 是构建镜像（带 ccache 与 pillow / pre-commit），
+  `.devcontainer/devcontainer.json` 是 VS Code 开发容器，都基于 `espressif/idf:v6.1`，
+  用法见 `docker/README.md`。
 
 ## 文档
 

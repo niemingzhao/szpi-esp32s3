@@ -56,8 +56,12 @@ szpi-esp32s3/
 │   ├── framework/          # Framework 层（含 assets/ 字体、图标与开机 Logo）
 │   └── apps/               # Apps 层（含 src/app_common.c 注册表）
 ├── managed_components/     # 组件管理器自动填充，按构建产物对待
-├── tools/                  # 自检脚本与字体生成
+├── tools/                  # 自检脚本（check_*）、工具测试（tests/）与字体 / 图标生成
 ├── docs/                   # 设计文档（需求 / 架构 / 详细设计）
+├── docker/                 # 构建镜像（Dockerfile，本地与 CI 共用）
+├── .devcontainer/          # VS Code 开发容器
+├── .github/workflows/      # CI（静态自检 + 编译）与一键发布
+├── releases/               # 发布用合并固件（szpi-esp32s3.bin，随版本提交）
 └── build/                  # 构建产物（在 .gitignore）
 ```
 
@@ -65,7 +69,7 @@ szpi-esp32s3/
 
 - `main/main.c` —— 启动入口：NVS → `bsp_init()`（Drivers：I2C0 GPIO1/2 100 kHz → LEDC 背光 GPIO42 → PCA9557 @ 0x19 → ST7789 屏 SPI3_HOST 40/41/39 80 MHz 模式 2 → FT6336 单点触摸 @ 0x38 → BOOT 键 GPIO0 → QMI8658 @ 0x6A）→ `peripherals_init_all()` → `services_init()` → `fw_init()` → `app_register_all()` → `fw_boot_animation()` → `fw_app_mgr_launch("Home")` → 挂载内置 SPIFFS → `svc_watchdog_arm()`。
 - `main/idf_component.yml` —— 组件依赖（LVGL 9、esp_lvgl_port 2.x、esp_lcd_touch_ft5x06、esp32-camera、helix MP3、esp_websocket_client、espressif/lua 等）。ES8311 / ES7210 音频 codec 不用组件，见 `main/drivers/src/drv_es8311.c`、`drv_es7210.c` 自实现的寄存器驱动。
-- `dependencies.lock` —— 精确锁定版本，**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
+- `dependencies.lock` —— 组件管理器生成的锁定文件，**不提交**（在 `.gitignore` 里）、**禁止手改**。升级时改 `main/idf_component.yml` 或 `sdkconfig.defaults`，让构建工具重新生成。
 - `partitions.csv` —— 自定义分区表，**不要切换到内置分区方案**。
 
 ---
@@ -331,6 +335,10 @@ panic 上下文里**不要碰堆**：`heap_caps_get_free_size()` 可能正持着
 - `python tools/check_tag.py` —— 每个 .c 都有且只有一个 TAG，且前缀与所在层一致
 - `python tools/check_app_callbacks.py` —— App 描述符必须有 `on_create` / `name` / `title`；有 `on_pause` 就要有 `on_start` 或 `on_resume`
 - `python tools/check_app_registry.py` —— App 描述符定义与 `app_common.c` 的注册一一对应
+
+一键跑全部：`python tools/run_checks.py`（CI 与 pre-commit 钩子用的就是它；只有 `check_*.py` 会被收进去）。单项也能单独跑，退出码 0 = 通过。
+
+这些脚本本身有测试：`python -m unittest discover -s tools/tests`（只需 Python 3 + pillow）。每个自检的坏样例必须报错、好样例必须放行，字体覆盖与 cmap 含端点，图标生成结果必须与仓库里的资源一致（字体那条很慢，`SZPI_TEST_FONTS=1` 才跑）。**改自检脚本或资源生成脚本时，同步 `tools/tests/`。**
 
 ### 4.20 内部 RAM 很紧，动配置前先算账
 
@@ -634,10 +642,39 @@ App / 脚本 调用 `svc_settings_set(key, value)` → NVS write → 触发 `SVC
 
 ## 十、本仓库**没有**的东西（不要去找）
 
-- 没有 CI 工作流（无 `.github/`、无 `.gitlab-ci.yml`）。
-- 没有主机端单元测试，没有 Unity / pytest-embedded 框架，没有代码覆盖率配置。
-- 没有 pre-commit 钩子，没有 `clang-format`、没有 linter 配置。
-- 没有 Docker / devcontainer。
+- 没有固件端单元测试：既没有 Unity 组件测试，也没有 pytest-embedded；固件行为只在真机上验证。
+- 没有代码覆盖率配置。
 - 没有 `CLAUDE.md` / `.cursor/rules`（`AGENTS.md` 是唯一的 agent 指引）。
 
-如需新增其中任何一项，**先与人类确认**再提议。
+CI、工具测试、pre-commit 与容器见第十一节。如需新增上面这些，**先与人类确认**再提议。
+
+---
+
+## 十一、自动化（CI / 测试 / 格式 / 容器）
+
+- **CI**：`.github/workflows/ci.yml`。push 到 `main` / `ci/*`、对 `main` 的 PR、手动触发时跑：
+  `checks`（`python tools/run_checks.py` + 工具单元测试）、`build`（自检通过后才跑；在
+  `espressif/idf:v6.1` 容器里编译，再用 `idf.py merge-bin` 合并成单一固件 `releases/szpi-esp32s3.bin`，
+  上传该固件与 `.elf` / `.map`），以及只在 main 推送时跑的 `refresh`（把合并固件提交回仓库，让仓库里的
+  固件始终是最新一次 main 构建；提交带 `[skip ci]`）。ccache 用 `actions/cache` 缓存 `~/.ccache`。
+- **一键发布**：`.github/workflows/release.yml`，手动触发填版本号提升方式（patch / minor / major）
+  或直接给版本号。流程是改版本号 → 编译合并 → 提交版本号与 `releases/szpi-esp32s3.bin` → 打标签 →
+  建 GitHub Release（固件作为资产上传）。
+- **版本号**：全工程只在 `main/services/include/svc_identity.h` 的 `SZPI_OS_VERSION` 定义一次，
+  由 `tools/bump_version.py` 读写（保留分段数与前导 `v`，只改那一行）。
+- **单一固件**：`releases/szpi-esp32s3.bin` 是 bootloader + 分区表 + 应用的合并镜像，串口烧录工具
+  选它、地址填 `0x0`。它是构建产物但随版本提交（发布时直接当资产用），不要手改。
+- **工具测试**：`tools/tests/`（Python `unittest`）。测的是**工具脚本**而不是固件：每个 `check_*.py`
+  的坏样例 / 好样例、字体覆盖与 cmap 含端点、图标生成的字节序与"生成结果与仓库一致"。
+  `python -m unittest discover -s tools/tests`，只需 Python 3 + pillow，不依赖硬件与 ESP-IDF。
+- **静态自检**：`python tools/run_checks.py` 一次跑完所有 `check_*.py`（清单见 4.19）。
+- **pre-commit**：`.pre-commit-config.yaml`。提交前跑静态自检，推送前跑工具测试，对改动的
+  C / 头文件跑 clang-format（`pip install pre-commit` 后 `pre-commit install`）。
+- **clang-format**：`.clang-format`（4 空格缩进、函数大括号另起一行、控制语句大括号同行、指针靠左、
+  列宽 100；包含顺序、注释换行、字符串换行都不动）。仓库此前没有统一格式，首次对全树执行会有
+  一处格式 diff，单独提交一次。
+- **容器**：`docker/Dockerfile`（构建镜像，带 ccache 与 pillow / pre-commit）与 `.devcontainer/`
+  （VS Code 开发容器），都基于 `espressif/idf:v6.1`，用法见 `docker/README.md`。
+
+改动这些文件时保持同步：新增自检脚本要加测试；只有 `check_*.py` 会被 `run_checks.py` 收进去，别的
+工具脚本要显式接进 CI 或 pre-commit 钩子。

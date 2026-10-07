@@ -1,0 +1,140 @@
+name: Release
+
+# 一键发布：改版本号 -> 编译并合并成单一固件 -> 提交版本号与固件 -> 打标签 -> 建 GitHub Release。
+# 在 Actions 页面手动触发（Run workflow），选版本号提升方式即可。
+#
+# 产物：releases/szpi-esp32s3.bin（合并了 bootloader + 分区表 + 应用的单一固件，
+# 直接用串口烧录工具选它、地址填 0x0 烧录）。
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 版本号提升方式（填了 version 时忽略）
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: 直接指定版本，如 0.6 或 1.0.0（可留空）
+        type: string
+        default: ''
+      prerelease:
+        description: 标记为预发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# 与 ci.yml 的 refresh job 用同一个并发组：两者都会往分支写 releases/szpi-esp32s3.bin，
+# 串行执行才不会互相顶掉。
+concurrency:
+  group: firmware-write
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 编译并合并固件
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: espressif/idf:v6.1
+    env:
+      IDF_CCACHE_ENABLE: 1
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: ccache 缓存
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: 写入新版本号
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            python tools/bump_version.py --set "${{ inputs.version }}"
+          else
+            python tools/bump_version.py --bump "${{ inputs.bump }}"
+          fi
+
+      - name: 编译并合并固件
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin
+          mkdir -p releases
+          cp build/merged-binary.bin releases/szpi-esp32s3.bin
+          ls -l releases/szpi-esp32s3.bin
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v7
+        with:
+          name: szpi-os-release
+          path: releases/szpi-esp32s3.bin
+          if-no-files-found: error
+
+  publish:
+    name: 打标签并发布
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 取回固件
+        uses: actions/download-artifact@v8
+        with:
+          name: szpi-os-release
+          path: releases
+
+      - name: 写入新版本号
+        run: python tools/bump_version.py --set "${{ needs.build.outputs.version }}"
+
+      - name: 检查触发分支
+        run: |
+          if [ "${{ github.ref_type }}" != "branch" ] || [ "${{ github.ref_name }}" != "main" ]; then
+            echo "发布要在 main 分支上触发（当前：${{ github.ref_type }} ${{ github.ref_name }}）"
+            exit 1
+          fi
+
+      - name: 提交版本号与固件、打标签
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+            echo "标签 $VERSION 已存在，请改版本号"; exit 1
+          fi
+          git add main/services/include/svc_identity.h releases/szpi-esp32s3.bin
+          git commit -m "发布 $VERSION"
+          git tag -a "$VERSION" -m "发布 $VERSION"
+          git push origin HEAD:main
+          git push origin "$VERSION"
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          FLAGS=()
+          if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
+          gh release create "$VERSION" releases/szpi-esp32s3.bin \
+            --title "$VERSION" --generate-notes "${FLAGS[@]}"

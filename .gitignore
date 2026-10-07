@@ -134,3 +134,12 @@ main/mmap_generate_emoji.h
 *.bin
 mmap_generate_*.h
 .clangd
+
+# ========== from current project ==========
+
+# devcontainer 要与 docker/ 一起提交
+!.devcontainer/
+!.devcontainer/**
+# releases/ 里是发布用的合并固件（szpi-esp32s3.bin），随版本提交
+!releases/
+!releases/**

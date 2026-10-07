@@ -1,0 +1,35 @@
+# pre-commit 钩子（本地开发用，可选）。
+#
+#   pip install pre-commit
+#   pre-commit install          # 装 commit 钩子
+#   pre-commit run --all-files  # 立刻全跑一遍
+#
+# 提交前跑静态自检（tools/run_checks.py）；推送前再跑一遍工具单元测试
+# （它含 12 项自检的子进程调用与图标可复现检查，比提交钩子慢，所以放到 pre-push）。
+repos:
+  - repo: local
+    hooks:
+      - id: szpi-checks
+        name: 静态自检（tools/run_checks.py）
+        entry: python tools/run_checks.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: szpi-unittest
+        name: 工具单元测试（tools/tests）
+        entry: python -m unittest discover -s tools/tests
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: clang-format
+        name: clang-format（C / 头文件）
+        entry: clang-format -i
+        language: system
+        files: \.(c|h)$
+        exclude: ^(managed_components|build)/
+
+default_install_hook_types: [pre-commit, pre-push]
+fail_fast: false

@@ -1,0 +1,68 @@
+# clang-format 配置。
+#
+# 按现有代码的实际风格整理：4 空格缩进、函数大括号另起一行、控制语句大括号同行、
+# 指针靠左（static const char *TAG）、switch 的 case 与 switch 对齐、列宽 100。
+#
+# 几项刻意关掉的（都是为了不制造无意义的大 diff）：
+#   SortIncludes      包含顺序是人工排的，不自动重排
+#   IncludeBlocks     保留 include 分组
+#   ReflowComments    注释是人工分行的（中文断行），不重排
+#   BreakStringLiterals  界面文案里的长中文串不切开
+#
+# 首次对全树执行 clang-format -i 会有一处格式 diff，建议单独提交一次：
+#   clang-format -i $(git ls-files 'main/*.c' 'main/*.h')
+#
+# 其中 switch 里 `case X:   return ...;` 这种"冒号后对齐"会被重排（clang-format 不保留
+# 它），属预期；其余应当只是行宽与少数换行。
+---
+Language: Cpp
+BasedOnStyle: Google
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakAfterReturnType: None
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterObjCDeclaration: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+BreakStringLiterals: false
+ColumnLimit: 100
+IndentCaseLabels: false
+IndentPPDirectives: None
+IndentWidth: 4
+IncludeBlocks: Preserve
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+PenaltyReturnTypeOnItsOwnLine: 200
+PointerAlignment: Left
+ReflowComments: false
+SortIncludes: false
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 2
+TabWidth: 4
+UseTab: Never
